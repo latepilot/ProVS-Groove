@@ -4,9 +4,9 @@ A groovebox firmware for the **Behringer PRO-VS MINI**: four synthesized drum tr
 
 Right now it is a portable C++ engine and a desktop simulator of the real panel (macOS, SDL2). **It cannot be put on the hardware yet**: there is no safe, supported way to flash the PRO-VS MINI. See [Getting it onto the hardware](#getting-it-onto-the-hardware).
 
-[![Simulator: click to watch the demo video](docs/sim.png)](docs/demo.mp4)
+![The acid track in the simulator (silent preview)](docs/demo.gif)
 
-**[▶ Demo video (54 s, with sound)](docs/demo.mp4)**: drums, vector synth and the acid track, all running in the simulator.
+**[▶ Full demo video with sound (54 s, MP4, downloads)](https://github.com/latepilot/ProVS-Groove/raw/main/docs/demo.mp4)**: drums, vector synth and the acid track, all running in the simulator.
 
 > **Made with AI.** I vibe-coded this project with Claude (Anthropic). Claude wrote the code; I set the direction and tested it. It is new code written from scratch, with no factory firmware, decompiled code or other proprietary material.
 

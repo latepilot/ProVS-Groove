@@ -34,6 +34,18 @@ class AcidBox {
 
   void init(float sampleRate);
   void process(float* outL, float* outR, int n);
+  // Hardware with the analog filter (SETUP step 12, line A -> V3320):
+  //   dryL/R    everything except line A (goes to the codec as usual)
+  //   toFilter  line A before the filter: route it to the DAC channel that
+  //             feeds the V3320 (VCA and drive already applied)
+  //   cutoffOct cutoff CV per sample, fc = 20 Hz * 2^cutoffOct (the 3320 is
+  //             exponential, so the HAL maps it linearly to volts + trim)
+  // analogReso() is the resonance CV for the block, 0..1.
+  // With line A on DIGITAL, toFilter and cutoffOct are filled with zeros.
+  // process() calls this and emulates the V3320 in software (simulator).
+  void processSplit(float* dryL, float* dryR, float* toFilter, float* cutoffOct, int n);
+  float analogReso() const { return voice_[0].reso(); }
+  bool analogFilter() const { return proj_.analogA != 0; }
 
   void stepDown(int s) { push({EV_STEP_DOWN, uint8_t(s), 0, 0}); }
   void stepUp(int s) { push({EV_STEP_UP, uint8_t(s), 0, 0}); }
@@ -127,7 +139,7 @@ class AcidBox {
   void fireDrum(int inst, bool accent);
   AcidParams voiceParams(int l) const;
   const char* drumName(int inst) const;
-  void render(float* L, float* R, int n);
+  void render(float* L, float* R, int n, float* F = nullptr, float* CV = nullptr);
 
   float sr_ = 48000.f;
   acid::Project proj_;
@@ -137,6 +149,8 @@ class AcidBox {
   Snare snare_;
   Hat hat_;
   Delay delay_;
+  Ladder analog_;       // software stand-in for the V3320 (simulator)
+  OnePole analogHp_;    // output coupling of the analog path
   // per drum voice (kick, clap/snare, hat): attack ramp, pan and send, set at trigger
   struct DrumMix { float gl = 0.7f, gr = 0.7f, send = 0, atk = 1, atkInc = 1; } dmix_[3];
   Rng rng_;

@@ -90,7 +90,8 @@ struct Project {
   uint8_t clockOut;
   uint8_t syncOut;
   uint8_t evolve;             // 0 off, else bars between mutations
-  uint8_t pad[2];
+  uint8_t analogA;            // 1: line A goes through the analog filter (V3320)
+  uint8_t pad;
 };
 
 const char* styleName(int s);

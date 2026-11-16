@@ -75,6 +75,8 @@ void AcidBox::init(float sr) {
   snare_.init(sr);
   hat_.init(sr);
   delay_.init(sr);
+  analog_.reset();
+  analogHp_.setLP(20.f, sr);
   initProject();
   computeStepDur();
 }
@@ -155,6 +157,7 @@ bool AcidBox::loadProject(const void* data, size_t n) {
   stop();
   std::memcpy(&proj_, data, n);
   if (proj_.current >= kPatterns) proj_.current = 0;
+  proj_.analogA = proj_.analogA ? 1 : 0;
   return true;
 }
 
@@ -349,6 +352,9 @@ void AcidBox::onSetupStep(int s) {
   } else if (s == 9) {
     proj_.syncOut = !proj_.syncOut;
     msg("SYNC OUT", proj_.syncOut ? "ON" : "OFF");
+  } else if (s == 11) {
+    proj_.analogA = !proj_.analogA;
+    msg("LINE A FILTER", proj_.analogA ? "ANALOG 3320" : "DIGITAL");
   }
 }
 
@@ -1019,27 +1025,52 @@ void AcidBox::controlTick(int blk) {
 
 // ------------------------------------------------------------------ audio
 void AcidBox::process(float* outL, float* outR, int n) {
+  if (!proj_.analogA) { processSplit(outL, outR, nullptr, nullptr, n); return; }
+  // Simulator / no analog filter wired: emulate the V3320 on line A.
+  float f[16], cv[16];
+  int done = 0;
+  while (done < n) {
+    int blk = n - done < 16 ? n - done : 16;
+    processSplit(outL + done, outR + done, f, cv, blk);
+    float res = analogReso();
+    for (int i = 0; i < blk; i++) {
+      if ((i & 7) == 0) analog_.set(20.f * std::exp2(cv[i]), res, sr_);
+      float y = analogHp_.hp(analog_.tick(f[i])) * 0.62f;
+      outL[done + i] = clampf(outL[done + i] + y, -1.f, 1.f);
+      outR[done + i] = clampf(outR[done + i] + y, -1.f, 1.f);
+    }
+    done += blk;
+  }
+}
+
+void AcidBox::processSplit(float* dryL, float* dryR, float* toFilter, float* cutoffOct, int n) {
   drain();
   int done = 0;
   while (done < n) {
     int blk = n - done < 16 ? n - done : 16;
     controlTick(blk);
-    render(outL + done, outR + done, blk);
+    render(dryL + done, dryR + done, blk, toFilter ? toFilter + done : nullptr, cutoffOct ? cutoffOct + done : nullptr);
     done += blk;
     clock_ += uint64_t(blk);
   }
 }
 
-void AcidBox::render(float* L, float* R, int n) {
+void AcidBox::render(float* L, float* R, int n, float* F, float* CV) {
   float a[16], b[16];
-  voice_[0].render(a, n);
+  bool analog = proj_.analogA && F && CV;
+  if (analog) voice_[0].render(a, n, F, CV);
+  else {
+    voice_[0].render(a, n);
+    if (F) for (int i = 0; i < n; i++) { F[i] = 0; CV[i] = 0; }
+  }
   voice_[1].render(b, n);
   float sa = proj_.line[0][LP_SEND] / 127.f, sb = proj_.line[1][LP_SEND] / 127.f;
   sa *= sa; sb *= sb;
+  float ga = analog ? 0.f : 1.f;  // line A leaves the dry mix when it goes analog
   for (int i = 0; i < n; i++) {
     float dv[3] = {kick_.tick(), clap_.tick() + snare_.tick(), hat_.tick()};
-    float l = a[i] * 0.72f + b[i] * 0.5f, r = a[i] * 0.72f + b[i] * 0.66f;
-    float send = a[i] * sa + b[i] * sb;
+    float l = a[i] * 0.72f * ga + b[i] * 0.5f, r = a[i] * 0.72f * ga + b[i] * 0.66f;
+    float send = a[i] * sa + b[i] * sb;  // the delay always gets the digital copy of A
     for (int v = 0; v < 3; v++) {
       DrumMix& m = dmix_[v];
       if (m.atk < 1.f) { m.atk += m.atkInc; if (m.atk > 1.f) m.atk = 1.f; }
@@ -1071,6 +1102,7 @@ uint16_t AcidBox::stepLeds() const {
       m = uint16_t(1u << proj_.clockSrc) | uint16_t(1u << (4 + (proj_.syncPpqn & 3)));
       if (proj_.clockOut) m |= 1u << 8;
       if (proj_.syncOut) m |= 1u << 9;
+      if (proj_.analogA) m |= 1u << 11;
       return m;
     case M_MUTE:
       for (int t = 0; t < 3; t++) if (!mute_[t]) m |= 1u << t;
@@ -1184,8 +1216,8 @@ void AcidBox::drawDisplay(Display& d) const {
       d.text(0, 0, buf);
       std::snprintf(buf, sizeof buf, "OUT: MIDI %s SYNC %s", proj_.clockOut ? "ON" : "--", proj_.syncOut ? "ON" : "--");
       d.text(0, 8, buf);
-      d.text(0, 16, "1-3 CLK  5-8 PPQN");
-      d.text(0, 24, "9 MIDIOUT 10 SYNCOUT");
+      d.text(0, 16, proj_.analogA ? "1-3 CLK 5-8 PPQN A:ANLG" : "1-3 CLK 5-8 PPQN A:DIG");
+      d.text(0, 24, "9 MIDI 10 SYNC 12 A FLT");
       return;
     }
     default: break;

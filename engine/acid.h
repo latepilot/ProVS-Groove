@@ -1,9 +1,10 @@
 // Acid bass voice: monophonic saw/square through a resonant 4-pole low-pass
 // with a decaying filter envelope, accent and slide.
 //
-// Unlike the vector synth this voice has its own DIGITAL filter: the Pro VS
-// Mini's single analog filter belongs to the vector synth, so on hardware the
-// acid line is rendered fully in software and mixed after it.
+// The voice has its own DIGITAL filter. It can also hand its signal to the
+// Pro VS Mini's analog filter (CoolAudio V3320): render() with `pre` / `cvOct`
+// then also writes the signal before the filter (VCA and drive already
+// applied) and the cutoff as a CV, in octaves above 20 Hz.
 //
 // Slide works like on the classic acid boxes: a slid note keeps its gate open
 // into the next step, and a note that arrives while the gate is still open
@@ -73,6 +74,7 @@ class Acid {
   void allOff() { gated_ = false; gateLeft_ = 0; }
   bool gated() const { return gated_; }
   int note() const { return note_; }
+  float reso() const { return resoNow_; }  // resonance the filter used last, 0..1
 
   void control(const AcidParams& p, int blk) {
     p_ = p;
@@ -94,7 +96,9 @@ class Acid {
     flt_.set(base, p.reso * 0.93f, sr_);
   }
 
-  void render(float* out, int n) {
+  // pre / cvOct (optional): signal for an external filter and its cutoff
+  // (fc = 20 Hz * 2^cvOct). `out` is always the digitally filtered voice.
+  void render(float* out, int n, float* pre = nullptr, float* cvOct = nullptr) {
     float amAtk = 1.f - std::exp(-1.f / (0.003f * sr_));
     float amRel = 1.f - std::exp(-1.f / (0.008f * sr_));
     float capUp = 1.f - std::exp(-1.f / (0.025f * sr_));
@@ -118,8 +122,11 @@ class Acid {
       if ((i & 7) == 0) {
         float oct = menv_ * p_.envMod * 4.5f + accCap_ * 3.f;
         float fc = baseHz_ * cutMul * std::exp2(oct);
-        flt_.set(fc, clamp01(p_.reso * 0.93f + accCap_ * 0.05f), sr_);
+        resoNow_ = clamp01(p_.reso * 0.93f + accCap_ * 0.05f);
+        flt_.set(fc, resoNow_, sr_);
+        cvNow_ = std::log2(clampf(fc, 20.f, 20000.f) / 20.f);
       }
+      if (cvOct) cvOct[i] = cvNow_;
       // oscillator: polyBLEP saw or square
       phase_ += inc_;
       if (phase_ >= 1.f) phase_ -= 1.f;
@@ -140,6 +147,8 @@ class Acid {
         x += (s1 - (2.f * p3 - 1.f - blep(p3, inc_ * 0.5f))) * 0.45f * sub;
       }
       x = dcHp_.hp(x);
+      // analog route: VCA and drive come before the filter (the V3320 input)
+      if (pre) pre[i] = shapeOut(x * 0.8f * drive, p_.dist) * amp_ * p_.level * 0.8f;
       float y = flt_.tick(x * 0.8f);
       y = hpOut_.hp(y) * amp_;
       out[i] = shapeOut(y * drive, p_.dist) * (1.1f / (0.6f + 0.5f * drive)) * p_.level;
@@ -170,7 +179,7 @@ class Acid {
   int gateLeft_ = 0, note_ = -1;
   float targetNote_ = 45, curNote_ = 45, slideK_ = 0, inc_ = 0, phase_ = 0, subPh_ = 0;
   float amp_ = 0, level_ = 0.7f, menv_ = 0, menvK_ = 0.999f, vegDec_ = 1, vegK_ = 0.9999f;
-  float accCap_ = 0, baseHz_ = 500.f;
+  float accCap_ = 0, baseHz_ = 500.f, resoNow_ = 0, cvNow_ = 5;
 };
 
 }  // namespace pvg

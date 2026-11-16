@@ -1,3 +1,4 @@
+#include <algorithm>
 // ProVS Acid: self-tests (generator rules, panel, audio), demo WAV, CPU benchmark.
 // Usage: acid-test [out_dir]
 #include <chrono>
@@ -374,6 +375,48 @@ int main(int argc, char** argv) {
     CHECK(ab.muted(0), "mute line A");
     func(AF_MUTE); stepTap(0); press(B_FUNC);
     press(B_PLAY);
+  }
+
+  std::printf("[4e] line A through the analog filter (V3320 route)\n");
+  {
+    ab.init(SR); run(int(SR * 0.2f));
+    func(AF_MUTE); stepTap(1); stepTap(2); press(B_FUNC);  // line A alone
+    auto measure = [&]() {
+      press(B_PLAY);
+      Stats st;
+      run(int(SR * 60.f / 126.f * 4.f * 2.f), nullptr, &st);
+      press(B_PLAY);
+      run(int(SR * 0.5f));
+      return std::sqrt(st.sum2 / st.n);
+    };
+    double dig = measure();
+    float L[256], R[256], F[256], CV[256];
+    ab.processSplit(L, R, F, CV, 256);
+    bool zero = true;
+    for (int i = 0; i < 256; i++) zero = zero && F[i] == 0 && CV[i] == 0;
+    CHECK(zero, "DIGITAL: nothing goes to the analog filter");
+    ab.buttonDown(B_FUNC); tick(); press(B_MEMWRITE); ab.buttonUp(B_FUNC); tick();
+    stepTap(11);
+    CHECK(ab.analogFilter() && ab.project().analogA == 1, "SETUP step 12 routes line A to the analog filter");
+    CHECK(ab.stepLeds() & (1u << 11), "SETUP LED 12 shows the analog route");
+    press(B_MEMWRITE);
+    double ana = measure();
+    CHECK(!std::isnan(ana) && ana > dig * 0.5 && ana < dig * 1.8, "emulated analog level close to digital (rms %.3f vs %.3f)", ana, dig);
+    // hardware path: split buffers while playing
+    press(B_PLAY);
+    double fl = 0, dry = 0;
+    float cvMin = 99, cvMax = -99;
+    for (int k = 0; k < 400; k++) {
+      ab.processSplit(L, R, F, CV, 256);
+      for (int i = 0; i < 256; i++) {
+        fl += F[i] * F[i]; dry += L[i] * L[i];
+        cvMin = std::min(cvMin, CV[i]); cvMax = std::max(cvMax, CV[i]);
+      }
+    }
+    press(B_PLAY);
+    CHECK(fl > dry * 4, "line A leaves the dry mix (to filter %.1f vs dry %.1f; dry = delay only)", fl, dry);
+    CHECK(cvMin >= 0 && cvMax <= 10 && cvMax - cvMin > 1.f, "cutoff CV %.2f..%.2f oct above 20 Hz, moves with the envelope", cvMin, cvMax);
+    CHECK(ab.analogReso() > 0 && ab.analogReso() <= 1, "resonance CV %.2f", ab.analogReso());
   }
 
   std::printf("[5] save / load\n");

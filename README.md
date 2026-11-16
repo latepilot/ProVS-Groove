@@ -160,6 +160,18 @@ From a community photo of the main board (markings read off the photo, not measu
 | Audio | **PCM3008T** (TI / Burr-Brown) | 16-bit stereo codec (DAC + ADC), up to 48 kHz. The engine output gets converted to int16 for it. |
 | Test points | TP4, TP5, TP7, TP10 next to the MCU | Candidates for SWD; not traced yet. |
 
+From our own unit (board 0722-ABF, opened, markings read by eye, nothing measured yet):
+
+| Part | Marking | What it means for the port |
+|---|---|---|
+| Analog filter | **CoolAudio V3320** (IC11) | 4-pole low-pass VCF, a CEM3320 clone. One chip, so the analog filter is shared by all voices (paraphonic). Its cutoff and resonance are CVs from the MCU (DAC or filtered PWM, still unknown). |
+| Op-amp | **4580** (IC17, next to the filter) | Dual audio op-amp: buffers around the filter and/or the output. |
+| Buttons + LEDs | **Holtek HT16K33** (U5) | I2C LED driver with a key-scan matrix. The step buttons, the panel buttons and their LEDs most likely sit behind it, so the HAL talks I2C for `stepLeds()` / `led()` and the button scan. |
+| MIDI in | **TLP2368**-style optocoupler (U8) + 74HC14 (IC8) | DIN MIDI in on a UART RX; the Schmitt inverter probably shapes SYNC in/out and MIDI. |
+| Headers | **X3** (6 pins, back, near the regulator) and **X2** (6 pins, next to the OLED flex) | Unpopulated 6-pin headers. X3 is the best candidate for SWD / UART; pinout still to be traced with a meter. |
+| Panel | 13 pots (VR…) + **S10** (different body, "S" = switch) | S10 is probably an encoder or a pot with a switch; its job on the panel needs checking. |
+| Power | USB-C, 500 mA polyfuse, a switching converter (U2, L7, B340LA diodes), SOT-223 LDO (IC1) | The converter most likely makes the extra rail for the analog filter. |
+
 Consequences for the firmware:
 - **Run from QSPI, hot code in RAM.** The 2 MB flash is memory-mapped through the QUADSPI peripheral and cached. The audio callback and the DSP (`process`, the voices, the filters) go into ITCM (64 KB) so they never wait on flash.
 - **Saving needs care.** While the CPU executes from the QSPI chip it cannot erase or write that same chip. The save routine has to run from RAM with QSPI in indirect mode (audio can keep running from ITCM), or save on stop. The project is 116 KB = 29 sectors of 4 KB.
@@ -247,11 +259,11 @@ Generation is deterministic for a given seed (tested), so it can be replayed.
 | FUNC + joystick | generator density (X) and wildness (Y), latched |
 | joystick | live cutoff (X) and env mod (Y) on the current line |
 
-**FUNC + step:** 1 GEN, 2 MUTATE, 3 RHYTHM, 4 NOTES, 5 ACC/SLD, 6 UNDO, 7 STYLE (then step 1-8), 8 SCALE (then step 1-8; keys set the key), 9 EVOLVE, 10 ROTATE, 11 LEN, 12 COPY, 13 PASTE, 14 MUTE (steps 1-3), 15 PATTERN, 16 SAVE. FUNC + MEMORY WRITE = the same SETUP as ProVS Groove (MIDI clock / SYNC).
+**FUNC + step:** 1 GEN, 2 MUTATE, 3 RHYTHM, 4 NOTES, 5 ACC/SLD, 6 UNDO, 7 STYLE (then step 1-8), 8 SCALE (then step 1-8; keys set the key), 9 EVOLVE, 10 ROTATE, 11 LEN, 12 COPY, 13 PASTE, 14 MUTE (steps 1-3), 15 PATTERN, 16 SAVE. FUNC + MEMORY WRITE = the same SETUP as ProVS Groove (MIDI clock / SYNC), plus step 12 = line A filter DIGITAL / ANALOG.
 
 **Knobs on a line:** R1-R4 = cutoff / resonance / env mod / decay (FUNC + R1-R3 = drive / sub / level), CUTOFF knob = accent, RESO knob = slide time, WAVE = saw-square (FUNC = distortion type), FREQ = tune ±12, LFO RATE / AMT = synced LFO on the cutoff, CHORUS RATE = delay time (FUNC = feedback), CHORUS AMT = delay send, TEMPO (FUNC = swing). On the drum lane the knobs edit the drum picked with OSC: R1-R4 = attack / decay / snap / level (snap = click on the kick, spread on the clap, snappy on the snare, noise on the hats), FREQ = tune, WAVE = tone (sweep on the kick), LFO RATE = pan, CHORUS AMT = delay send, FUNC + WAVE = drive for the whole kit.
 
-**On hardware** both lines use their digital filter; the analog filter could take over line A once the board's audio path is known. Project size: 4.7 KB. CPU: about 225× real time on a Mac (≈92 ns per stereo sample), in the same range as ProVS Groove.
+**Line A through the analog filter:** SETUP step 12 switches line A between its digital filter and the Pro VS Mini's analog filter (a CoolAudio V3320, found on the board). In ANALOG mode line A leaves the dry mix; the engine hands the HAL line A before the filter (VCA and drive already applied, like overdriving the 3320 input), a cutoff CV per sample (octaves above 20 Hz, the 3320 is exponential) and a resonance CV (`processSplit()`). The filter envelope, accent sweep, LFO and joystick all move the CV. The delay still gets the digitally filtered copy of line A, since the analog signal never comes back into the MCU. In the simulator the V3320 is emulated with a ladder model; the level matches the digital route within a few percent. Line B and the drums stay digital either way. The setting is saved with the project. Project size: 4.7 KB. CPU: about 225× real time on a Mac (≈92 ns per stereo sample), in the same range as ProVS Groove.
 
 ## TODO
 

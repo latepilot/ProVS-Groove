@@ -1,0 +1,4 @@
+bin/
+out/
+state/
+.DS_Store

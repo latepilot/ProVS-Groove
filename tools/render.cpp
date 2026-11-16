@@ -130,9 +130,9 @@ int main(int argc, char** argv) {
   std::printf("[4] synth: hold step + keys = notes/chords, live record\n");
   {
     func(4);
-    func(7);  // clear track
+    gb.buttonDown(B_FUNC); tick(); press(B_REC); gb.buttonUp(B_FUNC); tick();  // clear track
     int p = gb.currentPattern();
-    CHECK(!gb.step(p, kSynthTrack, 0).on, "FUNC+8 cleared synth track");
+    CHECK(!gb.step(p, kSynthTrack, 0).on, "FUNC+RECORD cleared synth track");
     gb.stepDown(0); tick(); gb.keyDown(4); tick(); gb.keyUp(4); gb.stepUp(0); tick();
     gb.stepDown(1); tick(); gb.keyDown(7); tick(); gb.keyDown(11); tick(); gb.keyDown(14); tick();
     gb.keyUp(7); gb.keyUp(11); gb.keyUp(14); gb.stepUp(1); tick();
@@ -153,6 +153,32 @@ int main(int argc, char** argv) {
     press(B_PLAY);
   }
 
+  std::printf("[4b] acid: notes, slide, accent, sound\n");
+  {
+    func(5);
+    CHECK(gb.currentTrack() == kAcidTrack, "FUNC+6 selects acid");
+    gb.buttonDown(B_FUNC); tick(); press(B_REC); gb.buttonUp(B_FUNC); tick();  // clear the demo line
+    int p = gb.currentPattern();
+    gb.stepDown(1); tick(); gb.keyDown(4); tick(); gb.keyDown(9); tick(); gb.keyUp(4); gb.keyUp(9); tick();
+    press(B_LFO_SEL); press(B_ENV_SEL);
+    gb.stepUp(1); tick();
+    const Step& a = gb.step(p, kAcidTrack, 1);
+    CHECK(a.on && a.notes[0] == 50 && a.notes[1] == kNoNote, "acid is mono: last key wins (%d)", a.notes[0]);
+    CHECK(a.slide && a.accent && a.ratchet == 1, "hold step + LFO = slide, + ENV = accent");
+    gb.stepDown(1); tick(); gb.buttonDown(B_FUNC); tick(); press(B_LFO_SEL); gb.buttonUp(B_FUNC); gb.stepUp(1); tick();
+    CHECK(gb.step(p, kAcidTrack, 1).ratchet == 2 && gb.step(p, kAcidTrack, 1).slide, "hold step + FUNC + LFO = ratchet");
+    // the voice itself
+    Acid v; v.init(SR); AcidParams ap; float buf[16]; float pk = 0;
+    v.control(ap, 0);
+    bool l1 = v.noteOn(33, 1.f, true, 6000);
+    for (int i = 0; i < 300; i++) { v.control(ap, 16); v.render(buf, 16); for (float x : buf) pk = std::max(pk, std::fabs(x)); }
+    bool l2 = v.noteOn(45, 1.f, false, 6000);  // still gated: glides
+    CHECK(!l1 && l2, "note during an open gate slides (legato), first note retriggers");
+    for (int i = 0; i < 400; i++) { v.control(ap, 16); v.render(buf, 16); }
+    bool l3 = v.noteOn(40, 1.f, false, 3000);  // gate closed by now
+    CHECK(!l3 && pk > 0.1f && pk <= 1.2f, "retrigger after gate end, peak %.2f", pk);
+  }
+
   std::printf("[5] pattern queue switches on the bar\n");
   {
     press(B_PLAY);
@@ -170,11 +196,11 @@ int main(int argc, char** argv) {
 
   std::printf("[6] mute mode / euclid / length\n");
   {
-    func(5); stepTap(0);
+    func(6); stepTap(0);
     CHECK(gb.muted(TT_KICK), "mute mode + step1 mutes kick");
-    CHECK((gb.stepLeds() & 0x1F) == 0x1E, "LEDs show unmuted tracks");
+    CHECK((gb.stepLeds() & 0x3F) == 0x3E, "LEDs show unmuted tracks");
     stepTap(0); press(B_FUNC);  // unmute, tap FUNC exits the mode
-    CHECK(!gb.muted(TT_KICK) && (gb.stepLeds() & 0x1F) != 0x1E, "unmuted, mode exited");
+    CHECK(!gb.muted(TT_KICK) && (gb.stepLeds() & 0x3F) != 0x3E, "unmuted, mode exited");
     func(0);
     func(10); stepTap(11);
     int p = gb.currentPattern();

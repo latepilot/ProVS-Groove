@@ -44,7 +44,8 @@ cannot buy a second device - for example a groovebox, an alternative vector synt
 sequencer for other gear.
 
 As an example, I am writing an independent groovebox firmware for it ("ProVS Groove"):
-synthesized drums (kick, snare, hats, perc) plus the vector synth through the analog filter,
+synthesized drums (kick, snare, hats, perc), the vector synth through the analog filter and an
+acid bass line with accent and slide,
 16 patterns with per-step parameter locks, probability, ratchets, euclidean patterns, swing,
 a tempo-synced delay, and MIDI clock / SYNC in and out. The engine is written from scratch in
 portable C++, without any factory code, and it already runs in a desktop simulator of the panel.

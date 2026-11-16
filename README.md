@@ -1,6 +1,6 @@
 # ProVS Groove
 
-A groovebox firmware for the **Behringer PRO-VS MINI**: four synthesized drum tracks plus the vector synth, a 16-step sequencer with parameter locks, and MIDI clock / SYNC.
+A groovebox firmware for the **Behringer PRO-VS MINI**: four synthesized drum tracks, the vector synth and an acid bass line, a 16-step sequencer with parameter locks, and MIDI clock / SYNC.
 
 Right now it is a portable C++ engine and a desktop simulator of the real panel (macOS, SDL2). **It cannot be put on the hardware yet**: there is no safe, supported way to flash the PRO-VS MINI. See [Getting it onto the hardware](#getting-it-onto-the-hardware).
 
@@ -27,8 +27,9 @@ Needs clang and SDL2 (`brew install sdl2`). Homebrew's SDL2 in `/usr/local` is x
 | HH | 6 metallic squares (808 ratios) + noise | CLOSED / OPEN |
 | PC | multi-percussion | CLAP / TOM / COWBELL / ZAP |
 | SY | vector synth: 5 voices × 4 oscillators (A B C D) with ±24 semitone tuning, 32 built-in waves, joystick mix, 2 LFOs (vector / cutoff), AMP and FIL envelopes, one shared filter (paraphonic, like the original) | — |
+| AC | acid bass: mono saw/square, resonant 4-pole low-pass with a decaying envelope, accent (with the sweep that builds up on consecutive accents), slide, drive | SAW / SQUARE |
 
-Sequencer: 16 patterns × 5 tracks × 16 steps. Each track has its own length (polymeter). Per step: accent, probability (1/8…8/8), ratchets ×1–4, a p-lock on any parameter, and on the synth a chord of up to 3 notes and a gate of 1–16 steps. There is swing 50–75 %, a tempo-synced ping-pong delay with a send on every track, Euclid fills, DICE (random variation), and copy/paste of a track or a pattern.
+Sequencer: 16 patterns × 5 tracks × 16 steps. Each track has its own length (polymeter). Per step: accent, probability (1/8…8/8), ratchets ×1–4, a p-lock on any parameter, and on the synth a chord of up to 3 notes and a gate of 1–16 steps, on the acid track a note, gate and slide. There is swing 50–75 %, a tempo-synced ping-pong delay with a send on every track, Euclid fills, DICE (random variation), and copy/paste of a track or a pattern.
 
 ## Panel mapping
 
@@ -40,18 +41,20 @@ The layout follows the real panel (traced from photos): 16 step buttons with LED
 |---|---|
 | knob | p-lock |
 | joystick | lock vector XY (synth) / tune+tone (drums) |
-| keyboard key | step note; several keys = chord. On a drum track: pitch (TUNE lock) |
+| keyboard key | step note; several keys = chord (acid is mono: last key wins). On a drum track: pitch (TUNE lock) |
 | PROG − / + | probability |
-| FUNC + PROG − / + | note length (gate) on the synth |
+| FUNC + PROG − / + | note length (gate) on the synth and acid |
 | ENV | accent |
-| LFO | ratchet ×1→×4 |
+| LFO | ratchet ×1→×4. On the acid track: **slide** (FUNC + LFO = ratchet) |
 | OSC | clear all locks on the step |
 
 **FUNC + step** (the amber labels in the simulator):
 
-| 1–5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| track KICK SNARE HAT PERC SYNTH | MUTE mode (steps 1–5 mute tracks) | CLR ALL (pattern) | CLR TRK | COPY | PASTE | LEN (then step N) | EUCLID (then step N) | DICE | PATTERN (then step N) | KEYS | SAVE |
+| 1–6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| track KICK SNARE HAT PERC SYNTH ACID | MUTE mode (steps 1–6 mute tracks) | CLR ALL (pattern) | COPY | PASTE | LEN (then step N) | EUCLID (then step N) | DICE | PATTERN (then step N) | KEYS | SAVE |
+
+To clear just the current track use FUNC + RECORD.
 
 **FUNC + MEMORY WRITE** opens SETUP (sync, see below).
 
@@ -71,9 +74,10 @@ While FUNC is held, the screen shows a legend and the LEDs show the current trac
 
 **Knobs on drum tracks:** R1–R4 = tune / decay / tone / level, FREQ = drive, WAVE = crush, LFO RATE = pan, LFO AMT = sweep/snap/noise, CHORUS AMT = send.
 **Knobs on the synth:** R1–R4 follow the ENV selector, WAVE and FREQ (±24 semitones) follow the OSC selector, FUNC+FREQ = detune, LFO RATE/AMT follow the LFO selector, CUTOFF/RESO, FUNC+CUTOFF = filter envelope amount, CHORUS AMT = send.
+**Knobs on the acid track:** R1–R4 = cutoff / resonance / env mod / decay, FREQ = tune (±12), WAVE = accent, LFO RATE = drive, LFO AMT = slide time, CHORUS AMT = send. The joystick moves cutoff (X) and env mod (Y) live; hold a step + joystick to lock them.
 **Global:** TEMPO (FUNC = swing), CHORUS RATE = delay time (FUNC = feedback).
 
-The keyboard plays the current track: notes on the synth, a pitched hit on a drum track (the first C is unshifted). FUNC+15 (KEYS) makes the keyboard play the synth from any track.
+The keyboard plays the current track: notes on the synth and acid (legato playing on acid glides, and in RECORD it writes slides), a pitched hit on a drum track (the first C is unshifted). FUNC+15 (KEYS) makes the keyboard play the synth from any track.
 
 ### Sync: MIDI clock and SYNC
 
@@ -116,17 +120,18 @@ The screen is drawn 1:1 (one dot per pixel), which on a MacBook is roughly the r
 engine/            portable core: no dependencies, no allocation in the audio path
   groovebox.*      UI logic, sequencer, mixer; lock-free event queue
   synth.*          vector synth + wavetable generation at startup
+  acid.h           acid bass voice (own digital filter)
   drums.h fx.h dsp.h
   display.h        128×32 1-bit buffer in SSD1306 page layout (sent to the OLED as is)
-  model.h          POD project (~58 KB), written to flash with memcpy
+  model.h          POD project (~76 KB), written to flash with memcpy
 sim/main.cpp       SDL2: panel, mouse/keyboard, audio, CoreMIDI
 tools/render.cpp   tests, demo.wav, benchmark
 ```
 
 HAL boundary: `process()` from the audio DMA; `stepDown/keyDown/buttonDown/pot/joystick/midi` from the panel scan; `drawDisplay()` → OLED, `stepLeds()/led()` → LEDs; `takeSaveRequest()` → flash.
 
-**CPU budget:** on a Mac the engine renders about 340× faster than real time (≈61 ns per stereo sample, all voices). For a Cortex-M7 at 480 MHz that is roughly 5–15 % CPU at 48 kHz, as a rough estimate. Only the real chip will tell.
-**Memory:** wavetables 128 KB (float, can shrink to int16), delay buffer 192 KB (int16), project 58 KB. Fits in the 1 MB SRAM of an STM32H750.
+**CPU budget:** on a Mac the engine renders about 210× faster than real time (≈98 ns per stereo sample, all voices including acid). For a Cortex-M7 at 480 MHz that is roughly 5–15 % CPU at 48 kHz, as a rough estimate. Only the real chip will tell.
+**Memory:** wavetables 128 KB (float, can shrink to int16), delay buffer 192 KB (int16), project 76 KB. Fits in the 1 MB SRAM of an STM32H750.
 
 ## Getting it onto the hardware
 
@@ -136,7 +141,7 @@ Open questions until then:
 1. Confirm the MCU (one forum post says STM32H750VB with read-out protection) and find the SWD pins.
 2. Is there external QSPI flash (the H750 has only 128 KB internal)?
 3. Pinout: the touch keyboard controller, the 16 step buttons and LEDs, the joystick, 13 pots, 9 buttons, 9 selector LEDs, the OLED (controller, confirm 128×32), the audio DAC/I2S, the cutoff and resonance CV of the analog filter, and the SYNC jack direction.
-4. **Does all audio go through the filter?** In the simulator the drums bypass the filter and the filter is emulated with a ladder model. On hardware `Ladder` is replaced by CV to the analog filter.
+4. **Does all audio go through the filter?** In the simulator the drums bypass the filter and the filter is emulated with a ladder model. On hardware `Ladder` is replaced by CV to the analog filter. The acid bass keeps its own digital filter either way, because the single analog filter belongs to the vector synth.
 
 **Warning:** removing read-out protection on an STM32 erases the factory firmware. Flashing anything unofficial can brick your unit and void the warranty. Do it at your own risk, on a unit you can afford to lose.
 

@@ -6,19 +6,22 @@
 namespace pvg {
 
 constexpr int kNumSteps = 16;
-constexpr int kNumTracks = 5;
+constexpr int kNumTracks = 6;
 constexpr int kNumPatterns = 16;
 constexpr int kNumParams = 32;
 constexpr int kMaxNotes = 3;  // notes per synth step (paraphonic chords)
 constexpr int kSynthTrack = 4;
+constexpr int kAcidTrack = 5;
 constexpr uint8_t kNoNote = 0xFF;
 constexpr uint32_t kProjectMagic = 0x50564731;  // "PVG1"
-constexpr uint32_t kProjectVersion = 3;
+constexpr uint32_t kProjectVersion = 4;
 
 enum ClockSrc : uint8_t { CLK_INT, CLK_MIDI, CLK_SYNC };
 static const uint8_t kSyncPpqn[4] = {1, 2, 4, 24};  // pulses per quarter on the SYNC jack
 
-enum TrackType : uint8_t { TT_KICK, TT_SNARE, TT_HAT, TT_PERC, TT_SYNTH };
+enum TrackType : uint8_t { TT_KICK, TT_SNARE, TT_HAT, TT_PERC, TT_SYNTH, TT_ACID };
+inline bool isDrum(int t) { return t < TT_SYNTH; }
+inline bool isMelodic(int t) { return t >= TT_SYNTH; }  // tracks that store notes
 
 // Synth parameter slots
 enum : uint8_t {
@@ -41,6 +44,14 @@ enum : uint8_t {
   D_PAN,                                    // LFO RATE
   D_SWEEP,                                  // LFO AMT
 };
+// Acid bass slots (same knobs as the drum slots above)
+enum : uint8_t {
+  A_CUTOFF = 0, A_RESO, A_ENVMOD, A_DECAY,  // R1-R4
+  A_TUNE,                                   // FREQ (64 = 0, +-12 semitones)
+  A_ACCENT,                                 // WAVE
+  A_DRIVE,                                  // LFO RATE
+  A_SLIDE,                                  // LFO AMT (glide time)
+};
 
 struct Step {
   uint8_t on;
@@ -49,6 +60,8 @@ struct Step {
   uint8_t ratchet;   // 1..4 hits per step
   uint8_t gate;      // synth: length in steps 1..16
   uint8_t notes[kMaxNotes];
+  uint8_t slide;     // acid: glide into the next step
+  uint8_t pad[3];
   uint32_t lockMask; // bit per param slot
   uint8_t lock[kNumParams];
 };

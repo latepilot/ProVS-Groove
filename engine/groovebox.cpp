@@ -9,12 +9,13 @@ namespace pvg {
 static const char* kButtonNames[B_COUNT] = {"-", "+", "ENV", "LFO", "OSC", "MEMORY WRITE", "PLAY", "FUNC", "RECORD"};
 static const char* kPotNames[K_COUNT] = {"R1", "R2", "R3", "R4", "RATE", "AMT", "CUTOFF", "RESO",
                                          "WAVE", "FREQ", "RATE", "AMT", "TEMPO"};
-static const char* kFuncNames[16] = {"KICK", "SNARE", "HAT", "PERC", "SYNTH", "MUTE", "CLR ALL", "CLR TRK",
+static const char* kFuncNames[16] = {"KICK", "SNARE", "HAT", "PERC", "SYNTH", "ACID", "MUTE", "CLR ALL",
                                      "COPY", "PASTE", "LEN", "EUCLID", "DICE", "PATTERN", "KEYS", "SAVE"};
-static const char* kTrackNames[kNumTracks] = {"KICK", "SNARE", "HAT", "PERC", "SYNTH"};
-static const char* kVariantNames[4][4] = {
-    {"DEEP", "PUNCH", "", ""}, {"SNARE", "RIM", "", ""}, {"CLOSED", "OPEN", "", ""}, {"CLAP", "TOM", "COWBELL", "ZAP"}};
-static const int kVariantCount[4] = {2, 2, 2, 4};
+static const char* kTrackNames[kNumTracks] = {"KICK", "SNARE", "HAT", "PERC", "SYNTH", "ACID"};
+static const char* kVariantNames[kNumTracks][4] = {
+    {"DEEP", "PUNCH", "", ""}, {"SNARE", "RIM", "", ""}, {"CLOSED", "OPEN", "", ""}, {"CLAP", "TOM", "COWBELL", "ZAP"},
+    {"", "", "", ""}, {"SAW", "SQUARE", "", ""}};
+static const int kVariantCount[kNumTracks] = {2, 2, 2, 4, 1, 2};
 static const int kDelayDiv[6] = {1, 2, 3, 4, 6, 8};  // in 16th notes
 static const char* kDelayDivNames[6] = {"1/16", "1/8", "3/16", "1/4", "3/8", "1/2"};
 static const char* kNoteNames[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
@@ -35,6 +36,11 @@ const char* paramName(int t, int slot) {
         "FIL ENV", "VECTOR X", "VECTOR Y", "-", "-", "-", "-", "-"};
     return n[slot];
   }
+  if (t == kAcidTrack) {
+    static const char* n[8] = {"CUTOFF", "RESO", "ENV MOD", "DECAY", "TUNE", "ACCENT", "DRIVE", "SLIDE"};
+    if (slot < 8) return n[slot];
+    return slot == P_SEND ? "SEND" : "-";
+  }
   switch (slot) {
     case D_TUNE: return "TUNE";
     case D_DECAY: return "DECAY";
@@ -54,6 +60,7 @@ static void noteStr(int n, char* out, int len) {
   std::snprintf(out, len, "%s%d", kNoteNames[n % 12], n / 12 - 1);
 }
 static int tuneSemis(int v) { return int(std::lround((v - 64) * 24.f / 63.f)); }
+static int acidSemis(int v) { return int(std::lround((v - 64) * 12.f / 63.f)); }
 
 // ------------------------------------------------------------------ queue
 void Groovebox::push(const Event& e) {
@@ -97,6 +104,7 @@ void Groovebox::init(float sr) {
   hat_.init(sr);
   perc_.init(sr);
   synth_.init(sr);
+  acid_.init(sr);
   delay_.init(sr);
   initProject();
   loadDemo();
@@ -141,9 +149,14 @@ void Groovebox::initProject() {
       tr.length = 16;
       tr.variant = 0;
       std::memset(tr.p, 0, kNumParams);
-      if (t < 4) {
+      if (isDrum(t)) {
         std::memcpy(tr.p, kDrum[t], 8);
         tr.p[P_SEND] = kSend[t];
+      } else if (t == kAcidTrack) {
+        //                          CUT RES ENV DEC TUN ACC DRV SLD
+        static const uint8_t kAcid[8] = {38, 88, 72, 40, 64, 85, 35, 45};
+        std::memcpy(tr.p, kAcid, 8);
+        tr.p[P_SEND] = 22;
       } else {
         const uint8_t amp[4] = {4, 60, 50, 40}, fil[4] = {2, 55, 20, 40};
         for (int i = 0; i < 4; i++) { tr.p[S_AMP_A + i] = amp[i]; tr.p[S_FIL_A + i] = fil[i]; }
@@ -193,6 +206,19 @@ void Groovebox::loadDemo() {
   setLock(on(TT_SYNTH, 10), S_VEC_X, 127);
   setLock(on(TT_SYNTH, 14), S_VEC_Y, 127);
   setLock(on(TT_SYNTH, 14), S_CUTOFF, 80);
+  // acid line: A minor, slides into the octave jumps
+  const int acid[16] = {33, 33, 45, 33, -1, 36, 33, 31, 33, -1, 45, 43, 33, 33, 48, 45};
+  const uint8_t aAcc[16] = {1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0};
+  const uint8_t aSld[16] = {0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 1, 0};
+  for (int s = 0; s < 16; s++) {
+    if (acid[s] < 0) continue;
+    Step& st = on(TT_ACID, s);
+    st.notes[0] = uint8_t(acid[s]);
+    st.notes[1] = st.notes[2] = kNoNote;
+    st.accent = aAcc[s];
+    st.slide = aSld[s];
+  }
+  setLock(on(TT_ACID, 12), A_CUTOFF, 60);
   Pattern& b = proj_.patterns[1];
   b.tracks[TT_KICK].steps[0].on = 1;
   b.tracks[TT_KICK].steps[10].on = 1;
@@ -204,7 +230,49 @@ void Groovebox::loadDemo() {
   b.tracks[TT_PERC].steps[7].on = 1;
 }
 
+// Version 3 layout (5 tracks, no slide flag): migrated on load.
+namespace v3 {
+struct Step { uint8_t on, accent, prob, ratchet, gate, notes[kMaxNotes]; uint32_t lockMask; uint8_t lock[kNumParams]; };
+struct Track { Step steps[kNumSteps]; uint8_t length, variant, p[kNumParams], pad[2]; };
+struct Pattern { Track tracks[5]; uint8_t swing, pad[3]; };
+struct Project { uint32_t magic, version; Pattern patterns[kNumPatterns];
+                 uint8_t bpm, delayTime, delayFb, current, clockSrc, syncPpqn, clockOut, syncOut; };
+}  // namespace v3
+
 bool Groovebox::loadProject(const void* data, size_t n) {
+  if (n == sizeof(v3::Project)) {
+    const v3::Project* o = static_cast<const v3::Project*>(data);
+    if (o->magic != kProjectMagic || o->version != 3) return false;
+    stop();
+    uint8_t cur = cur_ == kAcidTrack ? 0 : uint8_t(cur_);
+    initProject();  // fresh acid tracks with default sound
+    for (int pi = 0; pi < kNumPatterns; pi++) {
+      Pattern& np = proj_.patterns[pi];
+      const v3::Pattern& op = o->patterns[pi];
+      np.swing = op.swing;
+      for (int t = 0; t < 5; t++) {
+        Track& nt = np.tracks[t];
+        const v3::Track& ot = op.tracks[t];
+        nt.length = ot.length;
+        nt.variant = ot.variant;
+        std::memcpy(nt.p, ot.p, kNumParams);
+        for (int s = 0; s < kNumSteps; s++) {
+          Step& ns = nt.steps[s];
+          const v3::Step& os = ot.steps[s];
+          ns.on = os.on; ns.accent = os.accent; ns.prob = os.prob; ns.ratchet = os.ratchet; ns.gate = os.gate;
+          std::memcpy(ns.notes, os.notes, kMaxNotes);
+          ns.slide = 0;
+          ns.lockMask = os.lockMask;
+          std::memcpy(ns.lock, os.lock, kNumParams);
+        }
+      }
+    }
+    proj_.bpm = o->bpm; proj_.delayTime = o->delayTime; proj_.delayFb = o->delayFb;
+    proj_.current = o->current < kNumPatterns ? o->current : 0;
+    proj_.clockSrc = o->clockSrc; proj_.syncPpqn = o->syncPpqn; proj_.clockOut = o->clockOut; proj_.syncOut = o->syncOut;
+    cur_ = cur;
+    return true;
+  }
   if (n != sizeof(Project)) return false;
   const Project* p = static_cast<const Project*>(data);
   if (p->magic != kProjectMagic || p->version != kProjectVersion) return false;
@@ -234,8 +302,9 @@ void Groovebox::showStep(int t, int s) {
   int n = std::snprintf(title, sizeof title, "STEP %d", s + 1);
   if (st.prob < 8) n += std::snprintf(title + n, sizeof title - n, " %d%%", st.prob * 100 / 8);
   if (st.ratchet > 1) n += std::snprintf(title + n, sizeof title - n, " x%d", st.ratchet);
-  if (t == kSynthTrack && st.gate > 1) std::snprintf(title + n, sizeof title - n, " G%d", st.gate);
-  if (t == kSynthTrack) {
+  if (isMelodic(t) && st.gate > 1) n += std::snprintf(title + n, sizeof title - n, " G%d", st.gate);
+  if (t == kAcidTrack && st.slide) std::snprintf(title + n, sizeof title - n, " SLD");
+  if (isMelodic(t)) {
     noteStr(st.notes[0], val, sizeof val);
     if (st.notes[1] != kNoNote) std::strncat(val, "+", sizeof val - std::strlen(val) - 1);
   } else {
@@ -274,7 +343,7 @@ void Groovebox::selectTrack(int t) {
 
 void Groovebox::dice(int t) {
   Track& tr = pat().tracks[t];
-  static const float kDensity[kNumTracks] = {0.3f, 0.2f, 0.6f, 0.2f, 0.45f};
+  static const float kDensity[kNumTracks] = {0.3f, 0.2f, 0.6f, 0.2f, 0.45f, 0.7f};
   static const int kPenta[5] = {0, 3, 5, 7, 10};
   int root = lastNote_ - (lastNote_ % 12) + 9;  // A of the current octave
   if (root > lastNote_ + 6) root -= 12;
@@ -287,7 +356,15 @@ void Groovebox::dice(int t) {
     st.on = rng_.uni() < d;
     st.accent = rng_.uni() < 0.2f;
     if (rng_.uni() < 0.1f) st.ratchet = 2;
-    if (t == kSynthTrack) {
+    if (t == kAcidTrack) {
+      int r = root - 12 * ((root - 24) / 12);  // keep the bass in octave 1-2
+      if (r > 40) r -= 12;
+      float u = rng_.uni();
+      st.notes[0] = uint8_t(r + (u < 0.55f ? 0 : kPenta[rng_.next() % 5]) + (rng_.uni() < 0.25f ? 12 : 0));
+      st.accent = rng_.uni() < 0.3f;
+      st.slide = rng_.uni() < 0.22f;
+      st.ratchet = 1;
+    } else if (t == kSynthTrack) {
       st.notes[0] = uint8_t(root + kPenta[rng_.next() % 5] + (rng_.uni() < 0.2f ? 12 : 0));
       st.gate = rng_.uni() < 0.2f ? 2 : 1;
     } else if (rng_.uni() < 0.15f) {
@@ -390,7 +467,7 @@ void Groovebox::onSetupStep(int s) {
 void Groovebox::onFunc(int s) {
   Track& tr = pat().tracks[cur_];
   switch (s) {
-    case F_TRK1: case F_TRK2: case F_TRK3: case F_TRK4: case F_TRK5: selectTrack(s); break;
+    case F_TRK1: case F_TRK2: case F_TRK3: case F_TRK4: case F_TRK5: case F_TRK6: selectTrack(s); break;
     case F_MUTE:
       mode_ = mode_ == M_MUTE ? M_NONE : M_MUTE;
       msg("MUTE MODE", mode_ == M_MUTE ? "ON" : "OFF");
@@ -399,14 +476,13 @@ void Groovebox::onFunc(int s) {
       for (auto& t : pat().tracks) clearTrack(t);
       msg("CLEAR ALL", "DONE");
       break;
-    case F_CLEAR_TRK: clearTrack(tr); msg("CLEAR", kTrackNames[cur_]); break;
     case F_COPY: clipTrack_ = tr; clipTrackValid_ = true; clipType_ = cur_; msg("COPY", kTrackNames[cur_]); break;
     case F_PASTE:
       if (clipTrackValid_) {
         uint8_t v = tr.variant;
         uint8_t keep[kNumParams];
         std::memcpy(keep, tr.p, kNumParams);
-        bool sameType = (cur_ == kSynthTrack) == (clipType_ == kSynthTrack);  // drum<->synth: keep sound
+        bool sameType = (isDrum(cur_) && isDrum(clipType_)) || cur_ == clipType_;  // other kind: keep the sound
         tr = clipTrack_;
         if (!sameType) { std::memcpy(tr.p, keep, kNumParams); tr.variant = v; }
         msg("PASTE", kTrackNames[cur_]);
@@ -437,7 +513,10 @@ void Groovebox::onKeyDown(int k) {
     for (int s = 0; s < kNumSteps; s++) {
       if (!(heldSteps_ & (1u << s))) continue;
       Step& st = tr.steps[s];
-      if (cur_ == kSynthTrack) {
+      if (cur_ == kAcidTrack) {
+        st.notes[0] = uint8_t(note);
+        st.notes[1] = st.notes[2] = kNoNote;
+      } else if (cur_ == kSynthTrack) {
         if (!chord) { st.notes[0] = uint8_t(note); st.notes[1] = st.notes[2] = kNoNote; }
         else for (auto& n : st.notes) if (n == kNoNote) { n = uint8_t(note); break; }
       } else {
@@ -446,14 +525,18 @@ void Groovebox::onKeyDown(int k) {
       stepEdited_ |= uint16_t(1u << s);
     }
     if (cur_ == kSynthTrack) { synth_.noteOn(note, 0.8f, int(sr_ * 0.25f)); lastNote_ = note; noteStr(note, v, sizeof v); }
+    else if (cur_ == kAcidTrack) { acid_.allOff(); acid_.noteOn(note, 0.8f, false, int(sr_ * 0.2f)); lastNote_ = note; noteStr(note, v, sizeof v); }
     else { Step tmp; resetStep(tmp); setLock(tmp, D_TUNE, tuneLock); fire(cur_, &tmp, 0.8f, false); std::snprintf(v, sizeof v, "%+d", k - kDrumBaseKey); }
-    msg(cur_ == kSynthTrack ? "STEP NOTE" : "STEP PITCH", v, -1, "LOCK");
+    msg(isMelodic(cur_) ? "STEP NOTE" : "STEP PITCH", v, -1, "LOCK");
     return;
   }
 
   bool synthTarget = keysMode_ || cur_ == kSynthTrack;
   if (synthTarget) {
     synth_.noteOn(note, 0.9f, -1);
+    lastNote_ = note;
+  } else if (cur_ == kAcidTrack) {
+    acid_.noteOn(note, 0.9f, false, -1);  // legato while another key is held
     lastNote_ = note;
   } else {
     Step tmp;
@@ -475,9 +558,11 @@ void Groovebox::onKeyDown(int k) {
     std::memcpy(st.lock, locks, kNumParams);
   }
   st.on = 1;
-  if (cur_ == kSynthTrack) {
+  if (isMelodic(cur_)) {
     if (addToChord) { for (auto& n : st.notes) if (n == kNoNote) { n = uint8_t(note); break; } }
     else st.notes[0] = uint8_t(note);
+    if (cur_ == kAcidTrack && chord && lastRecStep_ >= 0 && lastRecStep_ != s)
+      tr.steps[lastRecStep_].slide = 1;  // legato playing records a slide
   } else if (k != kDrumBaseKey) {
     setLock(st, D_TUNE, tuneLock);
   }
@@ -487,7 +572,10 @@ void Groovebox::onKeyDown(int k) {
 
 void Groovebox::onKeyUp(int k) {
   heldKeys_ &= ~(1u << k);
-  for (int o = -3; o <= 4; o++) synth_.noteOff(kKeyBaseNote + 12 * o + k);  // octave may have changed
+  for (int o = -3; o <= 4; o++) {  // octave may have changed
+    synth_.noteOff(kKeyBaseNote + 12 * o + k);
+    if (heldKeys_ == 0) acid_.noteOff(kKeyBaseNote + 12 * o + k);
+  }
 }
 
 // ------------------------------------------------------------------ buttons
@@ -504,6 +592,7 @@ void Groovebox::onButtonDown(int b) {
       if (heldSteps_ & (1u << s)) { f(tr.steps[s]); stepEdited_ |= uint16_t(1u << s); }
   };
   bool synth = cur_ == kSynthTrack;
+  bool acid = cur_ == kAcidTrack;
 
   switch (b) {
     case B_FUNC: funcUsed_ = false; break;
@@ -527,7 +616,7 @@ void Groovebox::onButtonDown(int b) {
     case B_PROG_UP: {
       int d = b == B_PROG_UP ? 1 : -1;
       if (firstHeld >= 0) {
-        if (fn && synth) forHeld([&](Step& s) { int g = s.gate + d; s.gate = uint8_t(g < 1 ? 1 : (g > 16 ? 16 : g)); });
+        if (fn && isMelodic(cur_)) forHeld([&](Step& s) { int g = s.gate + d; s.gate = uint8_t(g < 1 ? 1 : (g > 16 ? 16 : g)); });
         else forHeld([&](Step& s) { int p = s.prob + d; s.prob = uint8_t(p < 1 ? 1 : (p > 8 ? 8 : p)); });
         showStep(cur_, firstHeld);
       } else if (fn) {
@@ -546,10 +635,13 @@ void Groovebox::onButtonDown(int b) {
     case B_ENV_SEL:
       if (firstHeld >= 0) { forHeld([](Step& s) { s.accent = !s.accent; }); showStep(cur_, firstHeld); }
       else if (synth) { envSel_ = (envSel_ + 2) % 3; msg("R1-R4 ENVELOPE", kEnvNames[envSel_]); }
+      else if (acid) msg("R1 R2 R3 R4", "CUT RES ENV DEC");
       else msg("R1 R2 R3 R4", "TUN DEC TON LVL");
       break;
     case B_LFO_SEL:
-      if (firstHeld >= 0) { forHeld([](Step& s) { s.ratchet = uint8_t(s.ratchet % 4 + 1); }); showStep(cur_, firstHeld); }
+      if (firstHeld >= 0 && acid && !fn) { forHeld([](Step& s) { s.slide = !s.slide; }); showStep(cur_, firstHeld); }
+      else if (firstHeld >= 0) { forHeld([](Step& s) { s.ratchet = uint8_t(s.ratchet % 4 + 1); }); showStep(cur_, firstHeld); }
+      else if (acid) msg("RATE / AMT", "DRIVE SLIDE");
       else if (synth) { lfoSel_ = 1 - lfoSel_; msg(lfoSel_ ? "LFO 2" : "LFO 1", lfoSel_ ? "> CUTOFF" : "> VECTOR"); }
       else msg("RATE / AMT", "PAN SWEEP");
       break;
@@ -616,7 +708,8 @@ int Groovebox::potSlot(int p, int& track) const {
 void Groovebox::formatValue(int track, int slot, int v, char* out, int n) const {
   if (track == kSynthTrack && slot >= S_WAVE_A && slot <= S_WAVE_D) std::snprintf(out, n, "%s", waveName(v % kNumWaves));
   else if (track == kSynthTrack && slot >= S_TUNE_A && slot <= S_TUNE_D) std::snprintf(out, n, "%+d", tuneSemis(v));
-  else if (track != kSynthTrack && slot == D_PAN) std::snprintf(out, n, v == 64 ? "C" : (v < 64 ? "L%d" : "R%d"), v < 64 ? 64 - v : v - 64);
+  else if (track == kAcidTrack && slot == A_TUNE) std::snprintf(out, n, "%+d", acidSemis(v));
+  else if (isDrum(track) && slot == D_PAN) std::snprintf(out, n, v == 64 ? "C" : (v < 64 ? "L%d" : "R%d"), v < 64 ? 64 - v : v - 64);
   else std::snprintf(out, n, "%d", v);
 }
 
@@ -672,7 +765,8 @@ void Groovebox::onJoy(float x, float y) {
   joyLatch_ = mag;
   Track& tr = pat().tracks[cur_];
   bool syn = cur_ == kSynthTrack;
-  int sx = syn ? S_VEC_X : D_TUNE, sy = syn ? S_VEC_Y : D_TONE;
+  bool acid = cur_ == kAcidTrack;
+  int sx = syn ? S_VEC_X : (acid ? A_CUTOFF : D_TUNE), sy = syn ? S_VEC_Y : (acid ? A_ENVMOD : D_TONE);
   int vx, vy;
   if (syn) {
     vx = int((joyX_ + 1.f) * 63.5f + 0.5f);
@@ -692,7 +786,7 @@ void Groovebox::onJoy(float x, float y) {
         setLock(tr.steps[s], sy, vy);
         stepEdited_ |= uint16_t(1u << s);
       }
-    msg(syn ? "VECTOR X Y" : "TUNE TONE", vs, -1, "LOCK");
+    msg(syn ? "VECTOR X Y" : (acid ? "CUT ENVMOD" : "TUNE TONE"), vs, -1, "LOCK");
   } else if (syn) {
     funcUsed_ = true;
     tr.p[sx] = uint8_t(vx);
@@ -839,7 +933,9 @@ void Groovebox::stop() {
   extArmed_ = false;
   pendingStep_ = -1;
   synth_.allOff();
+  acid_.allOff();
   synthLockMask_ = 0;
+  acidLockMask_ = 0;
   for (int t = 0; t < kNumTracks; t++) { ratchLeft_[t] = 0; stepPos_[t] = 0; }
   if (queuedPattern_ >= 0) { proj_.current = uint8_t(queuedPattern_); queuedPattern_ = -1; }
 }
@@ -919,7 +1015,12 @@ void Groovebox::controlTick(int blk) {
     synthLockLeft_ -= blk;
     if (synthLockLeft_ <= 0) synthLockMask_ = 0;
   }
+  if (acidLockLeft_ > 0) {
+    acidLockLeft_ -= blk;
+    if (acidLockLeft_ <= 0) acidLockMask_ = 0;
+  }
   synth_.control(synthParams(), blk);
+  acid_.control(acidParams(), blk);
   delay_.setTime(stepSamples() * kDelayDiv[proj_.delayTime % 6]);
   delay_.setFeedback(proj_.delayFb / 127.f * 0.9f);
 }
@@ -981,7 +1082,47 @@ SynthParams Groovebox::synthParams() const {
   return p;
 }
 
+AcidParams Groovebox::acidParams() const {
+  const Track& tr = pat().tracks[kAcidTrack];
+  auto val = [&](int s) -> float {
+    int v = tr.p[s];
+    if ((acidLockMask_ >> s) & 1) v = acidLock_[s];
+    return v / 127.f;
+  };
+  AcidParams p;
+  p.cutoff = val(A_CUTOFF);
+  p.reso = val(A_RESO);
+  p.envMod = val(A_ENVMOD);
+  p.decay = val(A_DECAY);
+  p.accent = val(A_ACCENT);
+  p.drive = val(A_DRIVE);
+  p.slide = val(A_SLIDE);
+  int tv = ((acidLockMask_ >> A_TUNE) & 1) ? acidLock_[A_TUNE] : tr.p[A_TUNE];
+  p.tune = float(acidSemis(tv));
+  p.square = tr.variant == 1;
+  if (cur_ == kAcidTrack && !keysMode_ && !heldSteps_ && !held(B_FUNC)) {  // joystick = live cutoff / env mod
+    p.cutoff = clamp01(p.cutoff + joyX_ * 0.5f);
+    p.envMod = clamp01(p.envMod + joyY_ * 0.5f);
+  }
+  return p;
+}
+
 void Groovebox::fire(int t, const Step* st, float vel, bool ratchet) {
+  if (t == kAcidTrack) {
+    if (!st || st->notes[0] == kNoNote) return;
+    int sps = stepSamples();
+    int gate;
+    if (ratchet || st->ratchet > 1) gate = ratchInterval_[t] / 2;
+    else if (st->slide) gate = st->gate * sps + sps / 4;  // overlaps the next step: it will glide
+    else gate = st->gate * sps - sps / 2;
+    if (gate < 64) gate = 64;
+    acidLockMask_ = st->lockMask;
+    std::memcpy(acidLock_, st->lock, kNumParams);
+    acidLockLeft_ = gate;
+    acid_.control(acidParams(), 0);
+    acid_.noteOn(st->notes[0], vel, st->accent != 0, gate);
+    return;
+  }
   if (t == kSynthTrack) {
     if (!st) return;
     int gate = (ratchet || st->ratchet > 1) ? ratchInterval_[t] * 7 / 10 : st->gate * stepSamples() - stepSamples() / 8;
@@ -1022,8 +1163,11 @@ void Groovebox::process(float* outL, float* outR, int n) {
 }
 
 void Groovebox::render(float* L, float* R, int n) {
-  float syn[16];
+  float syn[16], acd[16];
   synth_.render(syn, n);
+  acid_.render(acd, n);
+  float acidSend = pat().tracks[kAcidTrack].p[P_SEND] / 127.f;
+  acidSend *= acidSend;
   float synSend = pat().tracks[kSynthTrack].p[P_SEND] / 127.f;
   synSend *= synSend;
   for (int i = 0; i < n; i++) {
@@ -1039,6 +1183,10 @@ void Groovebox::render(float* L, float* R, int n) {
     l += s * 0.707f;
     r += s * 0.707f;
     send += s * synSend;
+    float a = acd[i] * 0.8f;
+    l += a * 0.707f;
+    r += a * 0.707f;
+    send += a * acidSend;
     float dl, dr;
     delay_.tick(send * 0.7f, dl, dr);
     L[i] = softclip((l + dl) * 0.8f);
@@ -1125,21 +1273,21 @@ void Groovebox::drawDisplay(Display& d) const {
   const Track& tr = pat().tracks[cur_];
   char buf[24];
   if (held(B_FUNC)) {  // legend for FUNC + step
-    d.text(0, 0, "1-5 TRACK  6 MUTE");
-    d.text(0, 8, "7 CLR ALL  8 CLR TRK");
-    d.text(0, 16, "9 CPY 10 PST 11 LEN");
-    d.text(0, 24, "12 EUC 13 RND 14 PAT");
+    d.text(0, 0, "1-6 TRACK  7 MUTE");
+    d.text(0, 8, "8 CLR ALL  9 COPY");
+    d.text(0, 16, "10 PST 11 LEN 12 EUC");
+    d.text(0, 24, "13 RND 14 PAT 15 KEY");
     return;
   }
   switch (mode_) {
     case M_MUTE: {
-      d.text(0, 0, "MUTE: STEP 1-5");
-      static const char kL[kNumTracks] = {'K', 'S', 'H', 'P', 'Y'};
+      d.text(0, 0, "MUTE: STEP 1-6");
+      static const char kL[kNumTracks] = {'K', 'S', 'H', 'P', 'Y', 'A'};
       for (int t = 0; t < kNumTracks; t++) {
         char c[2] = {kL[t], 0};
-        int x = t * 26;
-        d.text(x + 6, 12, c, true, 2);
-        if (mute_[t]) d.invert(x + 2, 10, 20, 18);
+        int x = t * 21;
+        d.text(x + 4, 12, c, true, 2);
+        if (mute_[t]) d.invert(x + 1, 10, 19, 18);
       }
       return;
     }

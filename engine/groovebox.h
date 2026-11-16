@@ -15,6 +15,7 @@
 #pragma once
 #include <atomic>
 #include <cstddef>
+#include "acid.h"
 #include "display.h"
 #include "drums.h"
 #include "fx.h"
@@ -37,7 +38,7 @@ enum Led : uint8_t {
 };
 // FUNC + step button commands
 enum FuncCmd : uint8_t {
-  F_TRK1, F_TRK2, F_TRK3, F_TRK4, F_TRK5, F_MUTE, F_CLEAR_ALL, F_CLEAR_TRK,
+  F_TRK1, F_TRK2, F_TRK3, F_TRK4, F_TRK5, F_TRK6, F_MUTE, F_CLEAR_ALL,
   F_COPY, F_PASTE, F_LEN, F_EUCLID, F_DICE, F_PATTERN, F_KEYS, F_STORE
 };
 // Outgoing timing events, timestamped in samples (engine sample clock).
@@ -154,6 +155,7 @@ class Groovebox {
   void fire(int t, const Step* st, float vel, bool ratchet);
   DrumParams drumParams(int t, const Step* st, float vel) const;
   SynthParams synthParams() const;
+  AcidParams acidParams() const;
   void render(float* L, float* R, int n);
 
   float sr_ = 48000.f;
@@ -163,6 +165,7 @@ class Groovebox {
   Hat hat_;
   Perc perc_;
   Synth synth_;
+  Acid acid_;
   Delay delay_;
   struct Mix { float gl = 0.7f, gr = 0.7f, send = 0, crush = 0; Crusher cr; } mix_[4];
   Rng rng_;
@@ -175,10 +178,13 @@ class Groovebox {
   int queuedPattern_ = -1;
   int ratchLeft_[kNumTracks] = {}, ratchInterval_[kNumTracks] = {}, ratchCounter_[kNumTracks] = {}, ratchStep_[kNumTracks] = {};
   float ratchVel_[kNumTracks] = {};
-  int skipStep_[kNumTracks] = {-1, -1, -1, -1, -1};
+  int skipStep_[kNumTracks] = {-1, -1, -1, -1, -1, -1};
   uint32_t synthLockMask_ = 0;
   uint8_t synthLock_[kNumParams] = {};
   int synthLockLeft_ = 0;
+  uint32_t acidLockMask_ = 0;
+  uint8_t acidLock_[kNumParams] = {};
+  int acidLockLeft_ = 0;
   bool mute_[kNumTracks] = {};
 
   uint32_t heldKeys_ = 0, heldButtons_ = 0;

@@ -144,7 +144,11 @@ void Synth::noteOn(int note, float vel, int gateSamples) {
     for (auto& v : v_) if (v.age < tgt->age) tgt = &v;
   }
   Voice& v = *tgt;
-  if (!v.on) for (int o = 0; o < 4; o++) v.ph[o] = uint32_t(o) * 0x40000000u;
+  if (!v.on) {
+    for (int o = 0; o < 4; o++) v.ph[o] = uint32_t(o) * 0x40000000u;
+    v.svf.reset();
+    v.lad.reset();
+  }
   v.on = true;
   v.gated = true;
   v.note = note;
@@ -153,17 +157,30 @@ void Synth::noteOn(int note, float vel, int gateSamples) {
   v.age = ++ageCounter_;
   v.env.set(p_.att, p_.dec, p_.sus, p_.rel, sr_);
   v.env.gateOn();
+  for (int o = 0; o < 4; o++) {
+    v.oenv[o].set(p_.oatt[o], p_.odec[o], p_.osus[o], p_.orel[o], sr_);
+    v.oenv[o].gateOn();
+  }
+  v.venv.set(p_.fatt, p_.fdec, p_.fsus, p_.frel, sr_);
+  v.venv.gateOn();
   setPitch(v);
   fenv_.gateOn();
 }
 
 void Synth::noteOff(int note) {
   for (auto& v : v_)
-    if (v.on && v.gated && v.note == note && v.gateLeft < 0) { v.gated = false; v.env.gateOff(); }
+    if (v.on && v.gated && v.note == note && v.gateLeft < 0) release(v);
+}
+
+void Synth::release(Voice& v) {
+  v.gated = false;
+  v.env.gateOff();
+  v.venv.gateOff();
+  for (auto& e : v.oenv) e.gateOff();
 }
 
 void Synth::allOff() {
-  for (auto& v : v_) { v.gated = false; v.env.gateOff(); }
+  for (auto& v : v_) release(v);
   fenv_.gateOff();
 }
 
@@ -201,10 +218,19 @@ void Synth::control(const SynthParams& p, int blk) {
     if (!v.on) continue;
     if (v.gated && v.gateLeft > 0) {
       v.gateLeft -= blk;
-      if (v.gateLeft <= 0) { v.gated = false; v.env.gateOff(); }
+      if (v.gateLeft <= 0) release(v);
     }
     v.env.set(p.att, p.dec, p.sus, p.rel, sr_);
+    for (int o = 0; o < 4; o++) v.oenv[o].set(p.oatt[o], p.odec[o], p.osus[o], p.orel[o], sr_);
+    v.venv.set(p.fatt, p.fdec, p.fsus, p.frel, sr_);
     setPitch(v);
+    if (p.vcfMode) {  // per-voice filter: cutoff + its own envelope + half key tracking
+      float ve = 0;
+      for (int i = 0; i < blk; i++) ve = v.venv.tick();
+      float fc = 20.f * std::exp2(p.vcfCut * 10.f + p.vcfEnv * 6.f * ve + 0.5f * (v.note - 60) / 12.f);
+      if (p.vcfMode == 2) v.lad.set(fc, p.vcfRes, sr_);
+      else v.svf.set(fc, 0.5f + p.vcfRes * 9.f, sr_);
+    }
     anyGate |= v.gated;
   }
   if (!anyGate) fenv_.gateOff();
@@ -225,14 +251,23 @@ void Synth::render(float* out, int n) {
       if (!v.on) continue;
       float m = 0;
       for (int o = 0; o < 4; o++) {
-        if (w_[o] < 1e-4f) { v.ph[o] += v.inc[o]; continue; }
+        float oe = v.oenv[o].tick();
+        float w = w_[o] * oe;
+        if (w < 1e-4f) { v.ph[o] += v.inc[o]; continue; }
         const float* t = g_tab[wave_[o]][v.mip];
         uint32_t ph = v.ph[o];
         uint32_t idx = ph >> 24;
         float fr = (ph & 0xFFFFFF) * (1.f / 16777216.f);
         float a = t[idx], b = t[(idx + 1) & (kWaveLen - 1)];
-        m += w_[o] * (a + (b - a) * fr);
+        m += w * (a + (b - a) * fr);
         v.ph[o] = ph + v.inc[o];
+      }
+      switch (p_.vcfMode) {
+        case 1: m = v.svf.lp(m); break;
+        case 2: m = v.lad.tick(m); break;
+        case 3: m = v.svf.bp(m) * 1.4f; break;
+        case 4: m = v.svf.hp(m); break;
+        default: break;
       }
       float e = v.env.tick();
       if (!v.env.active()) { v.on = false; v.note = -1; }

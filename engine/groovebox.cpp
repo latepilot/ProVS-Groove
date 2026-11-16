@@ -19,7 +19,16 @@ static const int kVariantCount[kNumTracks] = {2, 2, 2, 4, 1, 2};
 static const int kDelayDiv[6] = {1, 2, 3, 4, 6, 8};  // in 16th notes
 static const char* kDelayDivNames[6] = {"1/16", "1/8", "3/16", "1/4", "3/8", "1/2"};
 static const char* kNoteNames[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
-static const char* kEnvNames[3] = {"FIL", "AMP", "MIX"};
+// ENV pages for the synth. Order when pressing ENV: AMP > OSC ENV > FIL > VOICE FLT > MIX
+enum EnvPage { EP_FIL, EP_AMP, EP_MIX, EP_OSC, EP_VCF };
+static const char* kEnvNames[5] = {"FIL", "AMP", "MIX", "OSC ENV", "VOICE FLT"};
+static const int kNextEnv[5] = {EP_VCF, EP_OSC, EP_AMP, EP_FIL, EP_MIX};
+static const char* kVcfModeNames[kVcfModes] = {"OFF", "LP12", "LP24", "BP", "HP"};
+static int envGroup(int slot) {  // first slot of the ADSR group a slot belongs to, -1 = none
+  if (slot >= S_AMP_A && slot <= S_FIL_R) return slot & ~3;
+  if (slot >= S_OENV && slot < S_OENV + 16) return S_OENV + ((slot - S_OENV) & ~3);
+  return -1;
+}
 
 const char* buttonName(int b) { return (b >= 0 && b < B_COUNT) ? kButtonNames[b] : "?"; }
 const char* potName(int p) { return (p >= 0 && p < K_COUNT) ? kPotNames[p] : "?"; }
@@ -32,7 +41,9 @@ const char* paramName(int t, int slot) {
         "AMP ATK", "AMP DEC", "AMP SUS", "AMP REL", "FIL ATK", "FIL DEC", "FIL SUS", "FIL REL",
         "WAVE A", "WAVE B", "WAVE C", "WAVE D", "FREQ A", "FREQ B", "FREQ C", "FREQ D",
         "DETUNE", "LFO1 RATE", "LFO1>VEC", "LFO2 RATE", "LFO2>CUT", "SEND", "CUTOFF", "RESO",
-        "FIL ENV", "VECTOR X", "VECTOR Y", "-", "-", "-", "-", "-"};
+        "FIL ENV", "VECTOR X", "VECTOR Y", "VCF CUTOFF", "VCF RESO", "VCF ENV", "VCF MODE", "-",
+        "A ATTACK", "A DECAY", "A SUSTAIN", "A RELEASE", "B ATTACK", "B DECAY", "B SUSTAIN", "B RELEASE",
+        "C ATTACK", "C DECAY", "C SUSTAIN", "C RELEASE", "D ATTACK", "D DECAY", "D SUSTAIN", "D RELEASE"};
     return n[slot];
   }
   if (t == kAcidTrack) {
@@ -171,6 +182,16 @@ void Groovebox::initProject() {
         tr.p[S_FENV] = 70;
         tr.p[S_VEC_X] = 64;
         tr.p[S_VEC_Y] = 64;
+        tr.p[S_VCF_CUT] = 90;
+        tr.p[S_VCF_RES] = 25;
+        tr.p[S_VCF_ENV] = 45;
+        tr.p[S_VCF_MODE] = 0;  // off: the classic paraphonic sound
+        for (int o = 0; o < 4; o++) {  // transparent until you shape them
+          tr.p[S_OENV + o * 4 + 0] = 0;
+          tr.p[S_OENV + o * 4 + 1] = 60;
+          tr.p[S_OENV + o * 4 + 2] = 127;
+          tr.p[S_OENV + o * 4 + 3] = 127;
+        }
       }
     }
   }
@@ -229,47 +250,63 @@ void Groovebox::loadDemo() {
   b.tracks[TT_PERC].steps[7].on = 1;
 }
 
-// Version 3 layout (5 tracks, no slide flag): migrated on load.
+// Older layouts, migrated on load. v3: 5 tracks, no slide flag. v4: 6 tracks.
+// Both have 32 parameter slots and a 32-bit lock mask.
 namespace v3 {
-struct Step { uint8_t on, accent, prob, ratchet, gate, notes[kMaxNotes]; uint32_t lockMask; uint8_t lock[kNumParams]; };
-struct Track { Step steps[kNumSteps]; uint8_t length, variant, p[kNumParams], pad[2]; };
+struct Step { uint8_t on, accent, prob, ratchet, gate, notes[kMaxNotes]; uint32_t lockMask; uint8_t lock[32]; };
+struct Track { Step steps[kNumSteps]; uint8_t length, variant, p[32], pad[2]; };
 struct Pattern { Track tracks[5]; uint8_t swing, pad[3]; };
 struct Project { uint32_t magic, version; Pattern patterns[kNumPatterns];
                  uint8_t bpm, delayTime, delayFb, current, clockSrc, syncPpqn, clockOut, syncOut; };
 }  // namespace v3
+namespace v4 {
+struct Step { uint8_t on, accent, prob, ratchet, gate, notes[kMaxNotes], slide, pad[3]; uint32_t lockMask; uint8_t lock[32]; };
+struct Track { Step steps[kNumSteps]; uint8_t length, variant, p[32], pad[2]; };
+struct Pattern { Track tracks[6]; uint8_t swing, pad[3]; };
+struct Project { uint32_t magic, version; Pattern patterns[kNumPatterns];
+                 uint8_t bpm, delayTime, delayFb, current, clockSrc, syncPpqn, clockOut, syncOut; };
+}  // namespace v4
+static uint8_t oldSlide(const v3::Step&) { return 0; }
+static uint8_t oldSlide(const v4::Step& s) { return s.slide; }
 
-bool Groovebox::loadProject(const void* data, size_t n) {
-  if (n == sizeof(v3::Project)) {
-    const v3::Project* o = static_cast<const v3::Project*>(data);
-    if (o->magic != kProjectMagic || o->version != 3) return false;
-    stop();
-    uint8_t cur = cur_ == kAcidTrack ? 0 : uint8_t(cur_);
-    initProject();  // fresh acid tracks with default sound
-    for (int pi = 0; pi < kNumPatterns; pi++) {
-      Pattern& np = proj_.patterns[pi];
-      const v3::Pattern& op = o->patterns[pi];
-      np.swing = op.swing;
-      for (int t = 0; t < 5; t++) {
-        Track& nt = np.tracks[t];
-        const v3::Track& ot = op.tracks[t];
-        nt.length = ot.length;
-        nt.variant = ot.variant;
-        std::memcpy(nt.p, ot.p, kNumParams);
-        for (int s = 0; s < kNumSteps; s++) {
-          Step& ns = nt.steps[s];
-          const v3::Step& os = ot.steps[s];
-          ns.on = os.on; ns.accent = os.accent; ns.prob = os.prob; ns.ratchet = os.ratchet; ns.gate = os.gate;
-          std::memcpy(ns.notes, os.notes, kMaxNotes);
-          ns.slide = 0;
-          ns.lockMask = os.lockMask;
-          std::memcpy(ns.lock, os.lock, kNumParams);
-        }
+// copies an old project over a freshly initialised one (new slots keep their defaults)
+template <class OP>
+static void migrate(Project& np, const OP* o, int nTracks) {
+  for (int pi = 0; pi < kNumPatterns; pi++) {
+    Pattern& pt = np.patterns[pi];
+    pt.swing = o->patterns[pi].swing;
+    for (int t = 0; t < nTracks; t++) {
+      Track& nt = pt.tracks[t];
+      const auto& ot = o->patterns[pi].tracks[t];
+      nt.length = ot.length;
+      nt.variant = ot.variant;
+      std::memcpy(nt.p, ot.p, S_VCF_CUT);  // slots 27..31 were unused before
+      for (int s = 0; s < kNumSteps; s++) {
+        Step& ns = nt.steps[s];
+        const auto& os = ot.steps[s];
+        ns.on = os.on; ns.accent = os.accent; ns.prob = os.prob; ns.ratchet = os.ratchet; ns.gate = os.gate;
+        std::memcpy(ns.notes, os.notes, kMaxNotes);
+        ns.slide = oldSlide(os);
+        ns.lockMask = os.lockMask & ((1u << S_VCF_CUT) - 1);
+        std::memcpy(ns.lock, os.lock, 32);
       }
     }
-    proj_.bpm = o->bpm; proj_.delayTime = o->delayTime; proj_.delayFb = o->delayFb;
-    proj_.current = o->current < kNumPatterns ? o->current : 0;
-    proj_.clockSrc = o->clockSrc; proj_.syncPpqn = o->syncPpqn; proj_.clockOut = o->clockOut; proj_.syncOut = o->syncOut;
-    cur_ = cur;
+  }
+  np.bpm = o->bpm; np.delayTime = o->delayTime; np.delayFb = o->delayFb;
+  np.current = o->current < kNumPatterns ? o->current : 0;
+  np.clockSrc = o->clockSrc; np.syncPpqn = o->syncPpqn; np.clockOut = o->clockOut; np.syncOut = o->syncOut;
+}
+
+bool Groovebox::loadProject(const void* data, size_t n) {
+  if (n == sizeof(v3::Project) || n == sizeof(v4::Project)) {
+    bool isV3 = n == sizeof(v3::Project);
+    const uint32_t* hdr = static_cast<const uint32_t*>(data);
+    if (hdr[0] != kProjectMagic || hdr[1] != (isV3 ? 3u : 4u)) return false;
+    stop();
+    initProject();
+    if (isV3) migrate(proj_, static_cast<const v3::Project*>(data), 5);
+    else migrate(proj_, static_cast<const v4::Project*>(data), 6);
+    if (cur_ >= kNumTracks) cur_ = 0;
     return true;
   }
   if (n != sizeof(Project)) return false;
@@ -287,11 +324,12 @@ void Groovebox::msg(const char* title, const char* value, int bar, const char* b
   std::snprintf(value_, sizeof value_, "%s", value);
   std::snprintf(badge_, sizeof badge_, "%s", badge);
   bar_ = bar;
+  envGraphHi_ = -1;
   msgUntil_ = clock_ + uint64_t(sr_ * 1.2f);
 }
 
 void Groovebox::setLock(Step& s, int slot, int v) {
-  s.lockMask |= 1u << slot;
+  s.lockMask |= uint64_t(1) << slot;
   s.lock[slot] = uint8_t(v < 0 ? 0 : (v > 127 ? 127 : v));
 }
 
@@ -549,7 +587,7 @@ void Groovebox::onKeyDown(int k) {
   Step& st = tr.steps[s];
   bool addToChord = chord && lastRecStep_ == s && cur_ == kSynthTrack;
   if (!addToChord) {
-    uint32_t mask = st.lockMask;
+    uint64_t mask = st.lockMask;
     uint8_t locks[kNumParams];
     std::memcpy(locks, st.lock, kNumParams);
     resetStep(st);
@@ -633,7 +671,20 @@ void Groovebox::onButtonDown(int b) {
     }
     case B_ENV_SEL:
       if (firstHeld >= 0) { forHeld([](Step& s) { s.accent = !s.accent; }); showStep(cur_, firstHeld); }
-      else if (synth) { envSel_ = (envSel_ + 2) % 3; msg("R1-R4 ENVELOPE", kEnvNames[envSel_]); }
+      else if (synth) {
+        envSel_ = kNextEnv[envSel_ % 5];
+        if (envSel_ == EP_OSC) {
+          char t[16];
+          std::snprintf(t, sizeof t, "OSC %c ENV", 'A' + oscSel_);
+          msg("R1-R4: OSC = WHICH", t);
+          showEnvGraph(kSynthTrack, S_OENV + oscSel_ * 4);
+          envGraphHi_ = -2;  // graph, nothing highlighted
+        } else if (envSel_ == EP_VCF) {
+          msg("R1-R4 CUT RES ENV MODE", "VOICE FLT");
+        } else {
+          msg("R1-R4 ENVELOPE", kEnvNames[envSel_]);
+        }
+      }
       else if (acid) msg("R1 R2 R3 R4", "CUT RES ENV DEC");
       else msg("R1 R2 R3 R4", "TUN DEC TON LVL");
       break;
@@ -650,7 +701,15 @@ void Groovebox::onButtonDown(int b) {
         oscSel_ = (oscSel_ + 1) % 4;
         char t[8];
         std::snprintf(t, sizeof t, "OSC %c", 'A' + oscSel_);
-        msg(t, waveName(tr.p[S_WAVE_A + oscSel_] % kNumWaves));
+        if (envSel_ == EP_OSC) {  // on the OSC ENV page: show that oscillator's envelope
+          char v[16];
+          std::snprintf(v, sizeof v, "OSC %c ENV", 'A' + oscSel_);
+          msg("R1-R4", v);
+          showEnvGraph(kSynthTrack, S_OENV + oscSel_ * 4);
+          envGraphHi_ = -2;
+        } else {
+          msg(t, waveName(tr.p[S_WAVE_A + oscSel_] % kNumWaves));
+        }
       } else {
         tr.variant = uint8_t((tr.variant + 1) % kVariantCount[cur_]);
         msg(kTrackNames[cur_], kVariantNames[cur_][tr.variant]);
@@ -690,8 +749,10 @@ int Groovebox::potSlot(int p, int& track) const {
   }
   if (p >= K_R1 && p <= K_R4) {
     int i = p - K_R1;
-    if (envSel_ == 1) return S_AMP_A + i;
-    if (envSel_ == 0) return S_FIL_A + i;
+    if (envSel_ == EP_AMP) return S_AMP_A + i;
+    if (envSel_ == EP_FIL) return S_FIL_A + i;
+    if (envSel_ == EP_OSC) return S_OENV + oscSel_ * 4 + i;
+    if (envSel_ == EP_VCF) return S_VCF_CUT + i;
     static const int kMix[4] = {S_VEC_X, S_VEC_Y, S_DETUNE, S_FENV};
     return kMix[i];
   }
@@ -707,6 +768,8 @@ int Groovebox::potSlot(int p, int& track) const {
 void Groovebox::formatValue(int track, int slot, int v, char* out, int n) const {
   if (track == kSynthTrack && slot >= S_WAVE_A && slot <= S_WAVE_D) std::snprintf(out, n, "%s", waveName(v % kNumWaves));
   else if (track == kSynthTrack && slot >= S_TUNE_A && slot <= S_TUNE_D) std::snprintf(out, n, "%+d", tuneSemis(v));
+  else if (track == kSynthTrack && slot == S_VCF_MODE) std::snprintf(out, n, "%s", kVcfModeNames[v % kVcfModes]);
+  else if (track == kSynthTrack && envGroup(slot) >= 0 && (slot & 3) == 2) std::snprintf(out, n, "%d%%", v * 100 / 127);
   else if (track == kAcidTrack && slot == A_TUNE) std::snprintf(out, n, "%+d", acidSemis(v));
   else if (isDrum(track) && slot == D_PAN) std::snprintf(out, n, v == 64 ? "C" : (v < 64 ? "L%d" : "R%d"), v < 64 ? 64 - v : v - 64);
   else std::snprintf(out, n, "%d", v);
@@ -735,9 +798,11 @@ void Groovebox::onPot(int p, float v) {
   if (slot < 0) return;
   int val = v7;
   if (track == kSynthTrack && slot >= S_WAVE_A && slot <= S_WAVE_D) val = int(v * (kNumWaves - 0.01f));
+  if (track == kSynthTrack && slot == S_VCF_MODE) val = int(v * (kVcfModes - 0.01f));
   Track& tr = pat().tracks[track];
   formatValue(track, slot, val, vs, sizeof vs);
   int bar = (track == kSynthTrack && slot >= S_WAVE_A && slot <= S_WAVE_D) ? val * 127 / (kNumWaves - 1) : val;
+  if (track == kSynthTrack && slot == S_VCF_MODE) bar = val * 127 / (kVcfModes - 1);
   const char* name = paramName(track, slot);
 
   if (track == cur_ && heldSteps_) {
@@ -751,6 +816,23 @@ void Groovebox::onPot(int p, float v) {
     tr.p[slot] = uint8_t(val);
     msg(name, vs, bar);
   }
+  if (track == kSynthTrack && envGroup(slot) >= 0) showEnvGraph(track, slot);
+}
+
+// ADSR graph next to the value: what you hear, including a lock on the held step
+void Groovebox::showEnvGraph(int track, int slot) {
+  int g = envGroup(slot);
+  if (g < 0) return;
+  const Track& tr = pat().tracks[track];
+  int held = -1;
+  for (int s = 0; s < kNumSteps; s++) if (heldSteps_ & (1u << s)) { held = s; break; }
+  for (int i = 0; i < 4; i++) {
+    int v = tr.p[g + i];
+    if (held >= 0 && track == cur_ && ((tr.steps[held].lockMask >> (g + i)) & 1)) v = tr.steps[held].lock[g + i];
+    envGraph_[i] = uint8_t(v);
+  }
+  envGraphHi_ = slot - g;
+  bar_ = -1;
 }
 
 void Groovebox::onJoy(float x, float y) {
@@ -1075,6 +1157,17 @@ SynthParams Groovebox::synthParams() const {
   p.cutoff = val(S_CUTOFF);
   p.reso = val(S_RESO);
   p.fenv = val(S_FENV);
+  for (int o = 0; o < 4; o++) {
+    int b = S_OENV + o * 4;
+    p.oatt[o] = atk(b);
+    p.odec[o] = tm(b + 1);
+    p.osus[o] = val(b + 2);
+    p.orel[o] = raw(b + 3) >= 127 ? 20.f : tm(b + 3);  // full release = "until the amp envelope ends"
+  }
+  p.vcfMode = raw(S_VCF_MODE) % kVcfModes;
+  p.vcfCut = val(S_VCF_CUT);
+  p.vcfRes = val(S_VCF_RES);
+  p.vcfEnv = val(S_VCF_ENV);
   bool live = (cur_ == kSynthTrack || keysMode_) && !heldSteps_ && !held(B_FUNC);
   p.vx = clampf(val(S_VEC_X) * 2.f - 1.f + (live ? joyX_ : 0.f), -1.f, 1.f);
   p.vy = clampf(val(S_VEC_Y) * 2.f - 1.f + (live ? joyY_ : 0.f), -1.f, 1.f);
@@ -1231,7 +1324,14 @@ uint16_t Groovebox::stepLeds() const {
 bool Groovebox::led(int l) const {
   bool synth = cur_ == kSynthTrack;
   switch (l) {
-    case LED_ENV_FIL: case LED_ENV_AMP: case LED_ENV_MIX: return synth && envSel_ == l - LED_ENV_FIL;
+    case LED_ENV_FIL: case LED_ENV_AMP: case LED_ENV_MIX: {
+      // OSC ENV blinks the AMP LED, VOICE FLT blinks the FIL LED
+      bool blink = (clock_ / uint64_t(sr_ * 0.2f)) & 1;
+      int page = envSel_;
+      if (page == EP_OSC) page = blink ? EP_AMP : -1;
+      if (page == EP_VCF) page = blink ? EP_FIL : -1;
+      return synth && page == l - LED_ENV_FIL;
+    }
     case LED_LFO1: case LED_LFO2: return synth && lfoSel_ == l - LED_LFO1;
     case LED_OSC_A: case LED_OSC_B: case LED_OSC_C: case LED_OSC_D:
       return (synth ? oscSel_ : pat().tracks[cur_].variant) == l - LED_OSC_A;
@@ -1260,6 +1360,41 @@ static void drawTitleValue(Display& d, const char* title, const char* value, int
   }
 }
 
+static void drawLine(Display& d, int x0, int y0, int x1, int y1) {
+  int dx = x1 > x0 ? x1 - x0 : x0 - x1, dy = y1 > y0 ? y0 - y1 : y1 - y0;
+  int sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1, err = dx + dy;
+  for (;;) {
+    d.set(x0, y0);
+    if (x0 == x1 && y0 == y1) break;
+    int e2 = 2 * err;
+    if (e2 >= dy) { err += dy; x0 += sx; }
+    if (e2 <= dx) { err += dx; y0 += sy; }
+  }
+}
+
+// title + big value on the left, the ADSR shape on the right (hi = stage being edited)
+static void drawEnvMsg(Display& d, const char* title, const char* value, const char* badge, const uint8_t* e, int hi) {
+  d.text(0, 0, title);
+  if (badge && *badge) {
+    int w = Display::textWidth(badge) + 4;
+    d.fill(Display::W - w, 0, w, 8);
+    d.text(Display::W - w + 2, 0, badge, false);
+  }
+  int scale = Display::textWidth(value, 2) <= 58 ? 2 : 1;
+  d.text(0, scale == 2 ? 13 : 16, value, true, scale);
+  const int gx = 62, top = 11, bot = 31;
+  int a = 1 + e[0] * 16 / 127, dcy = 1 + e[1] * 16 / 127, r = 1 + e[3] * 16 / 127, hold = 10;
+  int sy = bot - e[2] * (bot - top) / 127;
+  int x0 = gx, x1 = x0 + a, x2 = x1 + dcy, x3 = x2 + hold, x4 = x3 + r;
+  int xs[5] = {x0, x1, x2, x3, x4}, ys[5] = {bot, top, sy, sy, bot};
+  for (int i = 0; i < 4; i++) {
+    drawLine(d, xs[i], ys[i], xs[i + 1], ys[i + 1]);
+    int stage = i;  // 0 attack, 1 decay, 2 sustain, 3 release
+    if (stage == hi) { drawLine(d, xs[i], ys[i] - 1, xs[i + 1], ys[i + 1] - 1); drawLine(d, xs[i] + 1, ys[i], xs[i + 1] + 1, ys[i + 1]); }
+  }
+  d.hline(gx, bot, x4 - gx + 1);
+}
+
 void Groovebox::drawDisplay(Display& d) const {
   d.clear();
   if (clock_ < uint64_t(sr_ * 1.2f)) {  // boot splash
@@ -1267,7 +1402,11 @@ void Groovebox::drawDisplay(Display& d) const {
     d.text(16, 20, "GROOVE  fw 0.2");
     return;
   }
-  if (clock_ < msgUntil_) { drawTitleValue(d, title_, value_, bar_, badge_); return; }
+  if (clock_ < msgUntil_) {
+    if (envGraphHi_ != -1) { drawEnvMsg(d, title_, value_, badge_, envGraph_, envGraphHi_); return; }
+    drawTitleValue(d, title_, value_, bar_, badge_);
+    return;
+  }
 
   const Track& tr = pat().tracks[cur_];
   char buf[24];

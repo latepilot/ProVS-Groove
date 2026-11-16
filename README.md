@@ -33,7 +33,7 @@ Needs clang and SDL2 (`brew install sdl2`). Homebrew's SDL2 in `/usr/local` is x
 | SN | 2 tones + noise through an SVF | SNARE / RIM |
 | HH | 6 metallic squares (808 ratios) + noise | CLOSED / OPEN |
 | PC | multi-percussion | CLAP / TOM / COWBELL / ZAP |
-| SY | vector synth: 5 voices × 4 oscillators (A B C D) with ±24 semitone tuning, 32 built-in waves, joystick mix, 2 LFOs (vector / cutoff), AMP and FIL envelopes, one shared filter (paraphonic, like the original) | — |
+| SY | vector synth: 5 voices × 4 oscillators (A B C D) with ±24 semitone tuning, 32 built-in waves, joystick mix, 2 LFOs (vector / cutoff), AMP and FIL envelopes, **an envelope per oscillator** (the vector mix moves over time), **a digital filter per voice** (LP12 / LP24 / BP / HP, with its own envelope per note), then one shared filter like the original | — |
 | AC | acid bass: mono saw/square, resonant 4-pole low-pass with a decaying envelope, accent (with the sweep that builds up on consecutive accents), slide, drive | SAW / SQUARE |
 
 Sequencer: 16 patterns × 5 tracks × 16 steps. Each track has its own length (polymeter). Per step: accent, probability (1/8…8/8), ratchets ×1–4, a p-lock on any parameter, and on the synth a chord of up to 3 notes and a gate of 1–16 steps, on the acid track a note, gate and slide. There is swing 50–75 %, a tempo-synced ping-pong delay with a send on every track, Euclid fills, DICE (random variation), and copy/paste of a track or a pattern.
@@ -74,13 +74,13 @@ While FUNC is held, the screen shows a legend and the LEDs show the current trac
 | FUNC + RECORD | clear the track (like CLEAR on the panel) |
 | PROG − / + | pattern −/+ (while playing, switches at the start of the bar) |
 | FUNC + PROG − / + | keyboard octave |
-| ENV (FIL/AMP/MIX) | synth: what R1–R4 edit: AMP ADSR / FIL ADSR / MIX (vector X, Y, detune, filter envelope) |
+| ENV (FIL/AMP/MIX) | synth: what R1–R4 edit, pressing cycles AMP → OSC ENV → FIL → VOICE FLT → MIX. AMP = amp ADSR (AMP LED), OSC ENV = ADSR of the oscillator picked with OSC (AMP LED blinks), FIL = filter ADSR, used by the shared filter and the voice filters (FIL LED), VOICE FLT = per-voice filter cutoff / resonance / envelope amount / mode OFF-LP12-LP24-BP-HP (FIL LED blinks), MIX = vector X, Y, detune, filter envelope (MIX LED) |
 | LFO (1/2) | synth: LFO 1 spins the vector, LFO 2 modulates the cutoff |
 | OSC (A–D) | synth: which oscillator WAVE and FREQ edit. Drums: model (LEDs A–D) |
 | MEMORY WRITE | save (the simulator writes `state/project.pvg`) |
 
 **Knobs on drum tracks:** R1–R4 = tune / decay / tone / level, FREQ = drive, WAVE = crush, LFO RATE = pan, LFO AMT = sweep/snap/noise, CHORUS AMT = send.
-**Knobs on the synth:** R1–R4 follow the ENV selector, WAVE and FREQ (±24 semitones) follow the OSC selector, FUNC+FREQ = detune, LFO RATE/AMT follow the LFO selector, CUTOFF/RESO, FUNC+CUTOFF = filter envelope amount, CHORUS AMT = send.
+**Knobs on the synth:** R1–R4 follow the ENV selector (on envelope pages the OLED draws the ADSR shape next to the value, the stage you turn in bold), WAVE and FREQ (±24 semitones) follow the OSC selector, FUNC+FREQ = detune, LFO RATE/AMT follow the LFO selector, CUTOFF/RESO, FUNC+CUTOFF = filter envelope amount, CHORUS AMT = send.
 **Knobs on the acid track:** R1–R4 = cutoff / resonance / env mod / decay, FREQ = tune (±12), WAVE = accent, LFO RATE = drive, LFO AMT = slide time, CHORUS AMT = send. The joystick moves cutoff (X) and env mod (Y) live; hold a step + joystick to lock them.
 **Global:** TEMPO (FUNC = swing), CHORUS RATE = delay time (FUNC = feedback).
 
@@ -134,7 +134,7 @@ engine/            portable core: no dependencies, no allocation in the audio pa
   acidmodel.h      ProVS Acid data model
   drums.h fx.h dsp.h
   display.h        128×32 1-bit buffer in SSD1306 page layout (sent to the OLED as is)
-  model.h          POD project (~76 KB), written to flash with memcpy
+  model.h          POD project (~116 KB, 48 lockable parameters per track), written to flash with memcpy
 sim/main.cpp       SDL2: panel, mouse/keyboard, audio, CoreMIDI, demo video (-DPVA_ACID builds the acid sim)
 tools/render.cpp   ProVS Groove tests, demo.wav, benchmark
 tools/acid_test.cpp ProVS Acid tests (generator rules, panel, audio), benchmark
@@ -142,8 +142,8 @@ tools/acid_test.cpp ProVS Acid tests (generator rules, panel, audio), benchmark
 
 HAL boundary: `process()` from the audio DMA; `stepDown/keyDown/buttonDown/pot/joystick/midi` from the panel scan; `drawDisplay()` → OLED, `stepLeds()/led()` → LEDs; `takeSaveRequest()` → flash.
 
-**CPU budget:** on a Mac the engine renders about 210× faster than real time (≈98 ns per stereo sample, all voices including acid). For the Cortex-M7 at 480 MHz (STM32H750, confirmed from a board photo) that is roughly 5–15 % CPU at 48 kHz, as a rough estimate. Only the real chip will tell.
-**Memory:** wavetables 128 KB (float, can shrink to int16), delay buffer 192 KB (int16), project 76 KB. Fits in the 512 KB AXI SRAM of the STM32H750 (see the RAM layout below).
+**CPU budget:** on a Mac the engine renders about 175× faster than real time (≈118 ns per stereo sample, all voices including acid and the oscillator envelopes; each voice filter adds a little more). For the Cortex-M7 at 480 MHz (STM32H750, confirmed from a board photo) that is roughly 5–15 % CPU at 48 kHz, as a rough estimate. Only the real chip will tell.
+**Memory:** wavetables 128 KB (float, can shrink to int16), delay buffer 192 KB (int16), project 116 KB. Fits in the 512 KB AXI SRAM of the STM32H750 (see the RAM layout below).
 
 ## Getting it onto the hardware
 
@@ -162,8 +162,8 @@ From a community photo of the main board (markings read off the photo, not measu
 
 Consequences for the firmware:
 - **Run from QSPI, hot code in RAM.** The 2 MB flash is memory-mapped through the QUADSPI peripheral and cached. The audio callback and the DSP (`process`, the voices, the filters) go into ITCM (64 KB) so they never wait on flash.
-- **Saving needs care.** While the CPU executes from the QSPI chip it cannot erase or write that same chip. The save routine has to run from RAM with QSPI in indirect mode (audio can keep running from ITCM), or save on stop. The project is 76 KB = 19 sectors of 4 KB.
-- **RAM layout:** wavetables 128 KB + delay 192 KB + project 76 KB fit in the 512 KB AXI SRAM; DMA audio buffers in SRAM1/2; DTCM for the stack and hot state.
+- **Saving needs care.** While the CPU executes from the QSPI chip it cannot erase or write that same chip. The save routine has to run from RAM with QSPI in indirect mode (audio can keep running from ITCM), or save on stop. The project is 116 KB = 29 sectors of 4 KB.
+- **RAM layout:** wavetables 128 KB + delay 192 KB + project 116 KB fit in the 512 KB AXI SRAM; DMA audio buffers in SRAM1/2; DTCM for the stack and hot state.
 - **16-bit output:** fine for this engine (the delay is already int16); add light dither on the final conversion.
 
 Open questions:

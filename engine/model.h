@@ -9,13 +9,13 @@ namespace pvg {
 constexpr int kNumSteps = 16;
 constexpr int kNumTracks = 6;
 constexpr int kNumPatterns = 16;
-constexpr int kNumParams = 32;
+constexpr int kNumParams = 48;
 constexpr int kMaxNotes = 3;  // notes per synth step (paraphonic chords)
 constexpr int kSynthTrack = 4;
 constexpr int kAcidTrack = 5;
 constexpr uint8_t kNoNote = 0xFF;
 constexpr uint32_t kProjectMagic = 0x50564731;  // "PVG1"
-constexpr uint32_t kProjectVersion = 4;
+constexpr uint32_t kProjectVersion = 5;
 
 
 enum TrackType : uint8_t { TT_KICK, TT_SNARE, TT_HAT, TT_PERC, TT_SYNTH, TT_ACID };
@@ -34,6 +34,9 @@ enum : uint8_t {
   P_SEND,                                   // CHORUS AMT, every track
   S_CUTOFF, S_RESO, S_FENV,                 // analog filter (+FUNC+CUTOFF = env amount)
   S_VEC_X, S_VEC_Y,                         // vector position (joystick latch / ENV=MIX R1,R2)
+  S_VCF_CUT, S_VCF_RES, S_VCF_ENV, S_VCF_MODE,  // per-voice digital filter (ENV page VOICE FLT)
+  S_SPARE,
+  S_OENV,                                   // 32..47: per-oscillator envelopes, osc*4 + A D S R
 };
 // Drum parameter slots
 enum : uint8_t {
@@ -61,7 +64,7 @@ struct Step {
   uint8_t notes[kMaxNotes];
   uint8_t slide;     // acid: glide into the next step
   uint8_t pad[3];
-  uint32_t lockMask; // bit per param slot
+  uint64_t lockMask; // bit per param slot
   uint8_t lock[kNumParams];
 };
 

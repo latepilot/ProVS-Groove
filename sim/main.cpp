@@ -384,7 +384,7 @@ static void drawPanel() {
     sectionBar(735, 360, 155, "DELAY TIME/SEND");
   }
 #else
-  sectionBar(520, 178, 370, "ENVELOPE  (drums: TUNE DECAY TONE LEVEL)");
+  sectionBar(520, 178, 370, "ENV: AMP OSC FIL VCF MIX  (drums: TUNE DECAY TONE LVL)");
   sectionBar(520, 269, 150, "LFO");
   sectionBar(735, 269, 155, "ANALOG FILTER");
   sectionBar(520, 360, 150, "OSC");

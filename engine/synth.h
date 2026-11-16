@@ -1,5 +1,7 @@
-// Paraphonic vector synth: 5 voices x 4 wavetable oscillators (A,B,C,D) mixed by
-// the joystick position, summed into ONE filter, like the Pro VS Mini signal path.
+// Vector synth: 5 voices x 4 wavetable oscillators (A,B,C,D) mixed by the
+// joystick position. Each oscillator has its own envelope (the mix moves over
+// time) and each voice can have its own digital filter; then everything goes
+// through ONE shared filter, like the Pro VS Mini's analog filter.
 #pragma once
 #include "dsp.h"
 
@@ -27,7 +29,18 @@ struct SynthParams {
   float reso = 0;          // 0..1
   float vx = 0, vy = 0;    // -1..1
   float fenv = 0.5f;       // 0..1
+  // per-oscillator envelopes (s / level); the defaults leave the sound unchanged
+  float oatt[4] = {0.0005f, 0.0005f, 0.0005f, 0.0005f};
+  float odec[4] = {0.3f, 0.3f, 0.3f, 0.3f};
+  float osus[4] = {1.f, 1.f, 1.f, 1.f};
+  float orel[4] = {20.f, 20.f, 20.f, 20.f};
+  // per-voice digital filter (its envelope uses the FIL ADSR)
+  int vcfMode = 0;         // 0 off, 1 LP12, 2 LP24, 3 BP, 4 HP
+  float vcfCut = 0.7f;     // 0..1
+  float vcfRes = 0.2f;     // 0..1
+  float vcfEnv = 0.3f;     // 0..1
 };
+constexpr int kVcfModes = 5;
 
 class Synth {
  public:
@@ -54,8 +67,13 @@ class Synth {
     int gateLeft = -1;
     uint32_t age = 0;
     Adsr env;
+    Adsr oenv[4];   // per-oscillator envelopes
+    Adsr venv;      // per-voice filter envelope
+    Svf svf;
+    Ladder lad;
   };
   void setPitch(Voice& v);
+  void release(Voice& v);
   Voice v_[kVoices];
   Adsr fenv_;
   Ladder flt_;

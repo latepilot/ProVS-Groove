@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -177,6 +178,92 @@ int main(int argc, char** argv) {
     for (int i = 0; i < 400; i++) { v.control(ap, 16); v.render(buf, 16); }
     bool l3 = v.noteOn(40, 1.f, false, 3000);  // gate closed by now
     CHECK(!l3 && pk > 0.1f && pk <= 1.2f, "retrigger after gate end, peak %.2f", pk);
+  }
+
+  std::printf("[4c] synth: per-oscillator envelopes, per-voice filter, 64-bit locks\n");
+  {
+    // the voice itself
+    auto renderNote = [](SynthParams sp, float sec) {
+      static Synth sy;
+      sy.init(SR);
+      sy.control(sp, 0);
+      sy.noteOn(57, 1.f, -1);
+      float buf[16];
+      double e = 0, hf = 0;
+      float prev = 0;
+      int N = int(SR * sec) / 16;
+      for (int i = 0; i < N; i++) {
+        sy.control(sp, 16);
+        sy.render(buf, 16);
+        if (i > N / 2) for (float x : buf) { e += x * x; hf += (x - prev) * (x - prev); prev = x; }
+        else prev = buf[15];
+      }
+      return std::make_pair(std::sqrt(e), std::sqrt(hf));
+    };
+    SynthParams base;
+    base.cutoff = 1.f;
+    base.sus = 1.f;
+    auto ref = renderNote(base, 0.6f);
+    SynthParams oe = base;
+    for (int o = 0; o < 4; o++) { oe.osus[o] = 0; oe.odec[o] = 0.05f; }
+    auto dec = renderNote(oe, 0.6f);
+    CHECK(dec.first < ref.first * 0.05, "oscillator envelopes decay the mix (%.3f vs %.3f)", dec.first, ref.first);
+    SynthParams lp = base;
+    lp.vcfMode = 2; lp.vcfCut = 0.25f; lp.vcfEnv = 0;
+    auto low = renderNote(lp, 0.6f);
+    CHECK(low.second / low.first < 0.5 * ref.second / ref.first, "per-voice LP24 darkens the voice (hf ratio %.3f vs %.3f)",
+          low.second / low.first, ref.second / ref.first);
+    SynthParams hp = base;
+    hp.vcfMode = 4; hp.vcfCut = 0.75f; hp.vcfEnv = 0;
+    auto high = renderNote(hp, 0.6f);
+    CHECK(high.second / high.first > ref.second / ref.first, "per-voice HP brightens it");
+
+    // panel
+    func(4);
+    int p = gb.currentPattern();
+    press(B_ENV_SEL);  // AMP -> OSC ENV
+    press(B_OSC_SEL);  // osc B
+    gb.pot(K_R3, 0.f); tick();
+    CHECK(gb.project().patterns[p].tracks[kSynthTrack].p[S_OENV + 1 * 4 + 2] == 0, "ENV page OSC ENV: R3 = sustain of osc B");
+    Display d; gb.drawDisplay(d);
+    int graph = 0;
+    for (int y = 10; y < 32; y++) for (int x = 62; x < 128; x++) graph += d.get(x, y);
+    CHECK(graph > 30, "the OLED draws the envelope shape (%d px)", graph);
+    gb.stepDown(5); tick();
+    gb.pot(K_R4, 0.3f); tick();
+    gb.stepUp(5); tick();
+    const Step& ls = gb.step(p, kSynthTrack, 5);
+    CHECK((ls.lockMask >> (S_OENV + 7)) & 1, "p-lock on slot %d (above 32) works", S_OENV + 7);
+    press(B_ENV_SEL);  // FIL
+    press(B_ENV_SEL);  // VOICE FLT
+    gb.pot(K_R4, 0.5f); tick();
+    CHECK(gb.project().patterns[p].tracks[kSynthTrack].p[S_VCF_MODE] == 2, "VOICE FLT page: R4 = mode LP24");
+    gb.pot(K_R4, 0.f); tick();
+    press(B_ENV_SEL); press(B_ENV_SEL);  // MIX -> AMP
+    press(B_OSC_SEL); press(B_OSC_SEL); press(B_OSC_SEL);  // back to osc A
+  }
+
+  std::printf("[4d] loading a version 4 project\n");
+  {
+    struct S4 { uint8_t on, accent, prob, ratchet, gate, notes[3], slide, pad[3]; uint32_t lockMask; uint8_t lock[32]; };
+    struct T4 { S4 steps[16]; uint8_t length, variant, p[32], pad[2]; };
+    struct P4 { T4 tracks[6]; uint8_t swing, pad[3]; };
+    struct J4 { uint32_t magic, version; P4 patterns[16]; uint8_t bpm, delayTime, delayFb, current, clockSrc, syncPpqn, clockOut, syncOut; };
+    static J4 old;
+    std::memset(&old, 0, sizeof old);
+    old.magic = kProjectMagic;
+    old.version = 4;
+    old.bpm = 133;
+    old.patterns[2].tracks[kAcidTrack].steps[7] = S4{1, 1, 8, 1, 1, {40, 255, 255}, 1, {0, 0, 0}, 1u << 3, {}};
+    old.patterns[2].tracks[kAcidTrack].steps[7].lock[3] = 99;
+    old.patterns[2].tracks[kAcidTrack].length = 12;
+    static Groovebox g4;
+    g4.init(SR);
+    CHECK(g4.loadProject(&old, sizeof old), "v4 project loads (%zu bytes)", sizeof old);
+    const Step& st = g4.step(2, kAcidTrack, 7);
+    CHECK(g4.project().bpm == 133 && st.on && st.slide && st.notes[0] == 40 && ((st.lockMask >> 3) & 1) && st.lock[3] == 99,
+          "steps, slide and locks survive");
+    CHECK(g4.project().patterns[2].tracks[kSynthTrack].p[S_OENV + 2] == 127, "new slots get their defaults");
   }
 
   std::printf("[5] pattern queue switches on the bar\n");

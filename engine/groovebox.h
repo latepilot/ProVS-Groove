@@ -160,10 +160,10 @@ class Groovebox {
   int ratchLeft_[kNumTracks] = {}, ratchInterval_[kNumTracks] = {}, ratchCounter_[kNumTracks] = {}, ratchStep_[kNumTracks] = {};
   float ratchVel_[kNumTracks] = {};
   int skipStep_[kNumTracks] = {-1, -1, -1, -1, -1, -1};
-  uint32_t synthLockMask_ = 0;
+  uint64_t synthLockMask_ = 0;
   uint8_t synthLock_[kNumParams] = {};
   int synthLockLeft_ = 0;
-  uint32_t acidLockMask_ = 0;
+  uint64_t acidLockMask_ = 0;
   uint8_t acidLock_[kNumParams] = {};
   int acidLockLeft_ = 0;
   bool mute_[kNumTracks] = {};
@@ -175,6 +175,9 @@ class Groovebox {
   int cur_ = 0, envSel_ = 1, lfoSel_ = 0, oscSel_ = 0, octave_ = 0, lastNote_ = 45, lastRecStep_ = -1;
   float joyX_ = 0, joyY_ = 0, joyLatch_ = 0;
   char title_[24] = {}, value_[16] = {}, badge_[8] = {};
+  uint8_t envGraph_[4] = {};
+  int envGraphHi_ = -1;  // >= 0: the message shows an ADSR graph, this stage highlighted
+  void showEnvGraph(int track, int slot);
   int bar_ = -1;
   uint64_t msgUntil_ = 0;
   Track clipTrack_;

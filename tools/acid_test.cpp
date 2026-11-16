@@ -327,6 +327,24 @@ int main(int argc, char** argv) {
     uint16_t k0 = ab.drums(p).hits[DI_KICK];
     stepTap(2);
     CHECK(ab.drums(p).hits[DI_KICK] == (k0 ^ 4), "drum lane: tap toggles kick on step 3");
+    press(B_OSC_SEL);  // clap
+    ab.pot(K_R2, 0.9f); tick();
+    CHECK(ab.project().drum[DI_CLAP][DP_DECAY] == 114 && ab.project().drum[DI_KICK][DP_DECAY] == 58, "drum knobs edit only the drum picked with OSC");
+    ab.buttonDown(B_FUNC); tick(); press(B_OSC_SEL); ab.buttonUp(B_FUNC); tick();
+    CHECK(ab.project().drum[DI_CLAP][DP_MODEL] == DM_SNARE, "FUNC + OSC: clap -> snare");
+    press(B_OSC_SEL);  // closed hat
+    auto early = [&](float atk) {
+      ab.pot(K_R1, atk); tick();
+      run(int(SR * 0.4f));
+      Stats st;
+      ab.keyDown(2); ab.keyUp(2);
+      run(192, nullptr, &st);  // the first 4 ms
+      return st.peak;
+    };
+    float sharp = early(0.f), soft = early(1.f);
+    CHECK(soft < sharp * 0.3f, "hat attack 100 ms softens the hit (%.3f vs %.3f in the first 4 ms)", soft, sharp);
+    ab.pot(K_R1, 0.f); tick();
+    press(B_OSC_SEL); press(B_OSC_SEL);  // back to the first layer
     press(B_ENV_SEL);
   }
 

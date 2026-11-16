@@ -370,11 +370,19 @@ static void drawPanel() {
 
   // section bars + knobs
 #ifdef PVA_ACID
-  sectionBar(520, 178, 370, "CUTOFF  RESO  ENV MOD  DECAY  (FUNC: DRIVE SUB LEVEL)");
-  sectionBar(520, 269, 150, "LFO > CUTOFF");
-  sectionBar(735, 269, 155, "ACCENT  SLIDE");
-  sectionBar(520, 360, 150, "WAVE   TUNE");
-  sectionBar(735, 360, 155, "DELAY TIME/SEND");
+  if (g_gb.lane() == AcidBox::LANE_DRUMS) {  // the knobs follow the drum picked with OSC
+    sectionBar(520, 178, 370, "ATTACK  DECAY  SNAP  LEVEL   (drum picked with OSC)");
+    sectionBar(520, 269, 150, "PAN");
+    sectionBar(735, 269, 155, "-");
+    sectionBar(520, 360, 150, "TONE   TUNE");
+    sectionBar(735, 360, 155, "DELAY TIME/SEND");
+  } else {
+    sectionBar(520, 178, 370, "CUTOFF  RESO  ENV MOD  DECAY  (FUNC: DRIVE SUB LEVEL)");
+    sectionBar(520, 269, 150, "LFO > CUTOFF");
+    sectionBar(735, 269, 155, "ACCENT  SLIDE");
+    sectionBar(520, 360, 150, "WAVE   TUNE");
+    sectionBar(735, 360, 155, "DELAY TIME/SEND");
+  }
 #else
   sectionBar(520, 178, 370, "ENVELOPE  (drums: TUNE DECAY TONE LEVEL)");
   sectionBar(520, 269, 150, "LFO");
@@ -519,7 +527,13 @@ static int knobIndex(int pot) { for (size_t i = 0; i < knobs.size(); i++) if (kn
 #ifdef PVA_ACID
 static void syncKnobs() {
   int l = g_gb.lane();
-  if (l > 1) return;
+  if (l > 1) {
+    const uint8_t* q = g_gb.project().drum[g_gb.layer()];
+    const int pots[8] = {K_R1, K_R2, K_R3, K_R4, K_FREQ, K_WAVE, K_LFO_RATE, K_CH_AMT};
+    const int dp[8] = {acid::DP_ATTACK, acid::DP_DECAY, acid::DP_SNAP, acid::DP_LEVEL, acid::DP_TUNE, acid::DP_TONE, acid::DP_PAN, acid::DP_SEND};
+    for (int i = 0; i < 8; i++) knobs[knobIndex(pots[i])].v = q[dp[i]] / 127.f;
+    return;
+  }
   const uint8_t* q = g_gb.project().line[l];
   const int pots[11] = {K_R1, K_R2, K_R3, K_R4, K_LFO_RATE, K_LFO_AMT, K_CUTOFF, K_RESO, K_WAVE, K_FREQ, K_CH_AMT};
   const int lp[11] = {acid::LP_CUTOFF, acid::LP_RESO, acid::LP_ENVMOD, acid::LP_DECAY, acid::LP_LFO_RATE, acid::LP_LFO_AMT,
@@ -867,10 +881,10 @@ int main(int argc, char** argv) {
     if (g_gb.takeSaveRequest()) saveState(state);
 #ifdef PVA_ACID
     {  // knobs follow the selected lane's sound
-      static int lastLane = -1;
+      static int lastSel = -1;
       SDL_LockAudioDevice(g_dev);
-      int ln = g_gb.lane();
-      if (ln != lastLane) { lastLane = ln; syncKnobs(); }
+      int sel = g_gb.lane() * 4 + (g_gb.lane() == AcidBox::LANE_DRUMS ? g_gb.layer() : 0);
+      if (sel != lastSel) { lastSel = sel; syncKnobs(); }
       SDL_UnlockAudioDevice(g_dev);
     }
 #endif

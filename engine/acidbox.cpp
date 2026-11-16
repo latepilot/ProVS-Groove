@@ -14,7 +14,6 @@ const char* acidFuncName(int s) { return (s >= 0 && s < 16) ? kFuncNames[s] : "?
 
 static const char* kLaneNames[3] = {"LINE A", "LINE B", "DRUMS"};
 static const char* kLayerNames[4] = {"GATE", "ACCENT", "SLIDE", "OCTAVE"};
-static const char* kDrumNames[4] = {"KICK", "CLAP", "CL HAT", "OP HAT"};
 static const char* kStyleShort[ST_COUNT] = {"CLAS", "ROLL", "HYPN", "STAB", "SYNC", "DEEP", "RAVE", "WILD"};
 static const char* kScaleShort[SC_COUNT] = {"MIN", "PHR", "DOR", "HRM", "PEN", "BLU", "MAJ", "CHR"};
 static const char* kDistNames[4] = {"SOFT", "HARD", "FOLD", "FUZZ"};
@@ -25,7 +24,9 @@ static const char* kLfoDivNames[8] = {"1/16", "1/8", "1/4", "1/2", "1 BAR", "2 B
 static const char* kLineParamNames[LP_COUNT] = {"CUTOFF", "RESONANCE", "ENV MOD", "DECAY", "ACCENT", "SLIDE TIME",
                                                 "WAVE", "TUNE", "DRIVE", "SUB OSC", "LEVEL", "DISTORTION",
                                                 "LFO RATE", "LFO>CUTOFF", "DELAY SEND"};
-static const char* kDrumParamNames[DP_COUNT] = {"KICK TUNE", "KICK DECAY", "HAT DECAY", "DRUM LEVEL", "DRUM DRIVE", "DRUM SEND"};
+static const char* kDrumParamNames[DP_COUNT] = {"ATTACK", "DECAY", "SNAP", "LEVEL", "TUNE", "TONE", "PAN", "SEND", "MODEL"};
+static const char* kSlot2Models[3] = {"CLAP", "SNARE", "RIM"};
+static float attackSec(int v) { float x = v / 127.f; return x * x * 0.1f; }  // 0 .. 100 ms
 static const char* kClockNames[3] = {"INTERNAL", "MIDI", "SYNC IN"};
 
 static void noteStr(int n, char* out, int len) { std::snprintf(out, len, "%s%d", noteName(n), n / 12 - 1); }
@@ -71,6 +72,7 @@ void AcidBox::init(float sr) {
   for (auto& v : voice_) v.init(sr);
   kick_.init(sr);
   clap_.init(sr);
+  snare_.init(sr);
   hat_.init(sr);
   delay_.init(sr);
   initProject();
@@ -93,8 +95,13 @@ void AcidBox::initProject() {
   static const uint8_t kB[LP_COUNT] = {58, 82, 58, 34, 80, 40, 127, 64, 22, 0, 78, 0, 80, 0, 46};
   std::memcpy(proj_.line[0], kA, LP_COUNT);
   std::memcpy(proj_.line[1], kB, LP_COUNT);
-  static const uint8_t kD[DP_COUNT] = {38, 58, 30, 100, 12, 8};
-  std::memcpy(proj_.drum, kD, DP_COUNT);
+  //                                         ATK DEC SNP LVL TUN TON PAN SND MODEL
+  static const uint8_t kD[kDrumInst][DP_COUNT] = {{0, 58, 40, 110, 38, 50, 64, 0, 0},     // kick
+                                                  {0, 50, 55, 95, 64, 60, 58, 22, 0},     // clap / snare
+                                                  {0, 28, 40, 85, 70, 76, 74, 6, 0},      // closed hat
+                                                  {0, 55, 40, 72, 70, 76, 54, 16, 0}};    // open hat
+  for (int i = 0; i < kDrumInst; i++) std::memcpy(proj_.drum[i], kD[i], DP_COUNT);
+  proj_.kitDrive = 12;
 
   // starter patterns: one per style, each in its own key and scale
   struct Seed { uint8_t style, scale, root, dens, wild, swing; bool lineB; };
@@ -577,9 +584,14 @@ void AcidBox::onButtonDown(int b) {
       if (firstHeld >= 0 && lineLane) {
         forHeld([&](int s) { acid::Step& st = pat().lines[lane_].steps[s]; st.prob = uint8_t(st.prob <= 2 ? 8 : st.prob - 2); });
         showStep(firstHeld);
+      } else if (fn && !lineLane) {  // FUNC + OSC on the drum lane: the drum's model
+        int models = layer_ == DI_KICK ? 2 : (layer_ == DI_CLAP ? 3 : 1);
+        uint8_t& m = proj_.drum[layer_][DP_MODEL];
+        m = uint8_t((m + 1) % models);
+        msg("DRUM MODEL", models > 1 ? drumName(layer_) : "HATS: ONE MODEL");
       } else {
         layer_ = (layer_ + 1) % 4;
-        msg(lineLane ? "STEP LAYER" : "DRUM", lineLane ? kLayerNames[layer_] : kDrumNames[layer_]);
+        msg(lineLane ? "STEP LAYER" : "DRUM", lineLane ? kLayerNames[layer_] : drumName(layer_));
       }
       break;
   }
@@ -613,20 +625,39 @@ void AcidBox::onPot(int p, float v) {
       return;
     default: break;
   }
-  if (lane_ == LANE_DRUMS) {
+  if (lane_ == LANE_DRUMS) {  // knobs edit the drum picked with OSC (the layer)
+    if (fn && p == K_WAVE) {
+      proj_.kitDrive = uint8_t(v7);
+      std::snprintf(vs, sizeof vs, "%d", v7);
+      msg("KIT DRIVE", vs, v7);
+      return;
+    }
     int dp = -1;
     switch (p) {
-      case K_R1: dp = DP_KICK_TUNE; break;
-      case K_R2: dp = DP_KICK_DECAY; break;
-      case K_R3: dp = DP_HAT_DECAY; break;
+      case K_R1: dp = DP_ATTACK; break;
+      case K_R2: dp = DP_DECAY; break;
+      case K_R3: dp = DP_SNAP; break;
       case K_R4: dp = DP_LEVEL; break;
-      case K_WAVE: dp = DP_DRIVE; break;
+      case K_FREQ: dp = DP_TUNE; break;
+      case K_WAVE: dp = DP_TONE; break;
+      case K_LFO_RATE: dp = DP_PAN; break;
       case K_CH_AMT: dp = DP_SEND; break;
-      default: msg("DRUMS", "NO SUCH KNOB"); return;
+      default: msg(drumName(layer_), "NO SUCH KNOB"); return;
     }
-    proj_.drum[dp] = uint8_t(v7);
-    std::snprintf(vs, sizeof vs, "%d", v7);
-    msg(kDrumParamNames[dp], vs, v7);
+    proj_.drum[layer_][dp] = uint8_t(v7);
+    const char* pname = kDrumParamNames[dp];
+    if (dp == DP_SNAP) {
+      int m = proj_.drum[layer_][DP_MODEL];
+      pname = layer_ == DI_KICK ? "CLICK" : (layer_ == DI_CLAP ? (m == DM_CLAP ? "SPREAD" : "SNAPPY") : "NOISE");
+    } else if (dp == DP_TONE && layer_ == DI_KICK) {
+      pname = "SWEEP";
+    }
+    if (dp == DP_ATTACK) std::snprintf(vs, sizeof vs, "%d MS", int(attackSec(v7) * 1000.f + 0.5f));
+    else if (dp == DP_PAN) std::snprintf(vs, sizeof vs, v7 == 64 ? "C" : (v7 < 64 ? "L%d" : "R%d"), v7 < 64 ? 64 - v7 : v7 - 64);
+    else std::snprintf(vs, sizeof vs, "%d", v7);
+    char title[24];
+    std::snprintf(title, sizeof title, "%s %s", drumName(layer_), pname);
+    msg(title, vs, dp == DP_PAN ? -1 : v7);
     return;
   }
   int lp = -1;
@@ -863,38 +894,62 @@ void AcidBox::fireLine(int l, const acid::Step& s) {
   lastFired_[l] = note;
 }
 
+const char* AcidBox::drumName(int inst) const {
+  int m = proj_.drum[inst & 3][DP_MODEL];
+  switch (inst) {
+    case DI_KICK: return m ? "PUNCH" : "KICK";
+    case DI_CLAP: return kSlot2Models[m % 3];
+    case DI_CH: return "CL HAT";
+    default: return "OP HAT";
+  }
+}
+
 void AcidBox::fireDrum(int inst, bool accent) {
-  const uint8_t* dp = proj_.drum;
+  const uint8_t* q = proj_.drum[inst & 3];
+  auto v = [&](int i) { return q[i] / 127.f; };
   DrumParams p;
   p.vel = accent ? 1.f : 0.72f;
-  p.level = dp[DP_LEVEL] / 127.f;
-  p.drive = dp[DP_DRIVE] / 127.f;
+  p.level = v(DP_LEVEL);
+  p.drive = proj_.kitDrive / 127.f;
+  p.decay = v(DP_DECAY);
+  p.tune = v(DP_TUNE);
+  int voice = inst == DI_KICK ? 0 : (inst == DI_CLAP ? 1 : 2);
   switch (inst) {
     case DI_KICK:
-      p.tune = dp[DP_KICK_TUNE] / 127.f;
-      p.decay = dp[DP_KICK_DECAY] / 127.f;
-      p.tone = 0.45f;
-      p.sweep = 0.5f;
+      p.variant = q[DP_MODEL] % 2;
+      p.tone = v(DP_SNAP);   // click
+      p.sweep = v(DP_TONE);  // pitch sweep
       kick_.trigger(p);
       break;
     case DI_CLAP:
-      p.variant = 0;
-      p.tone = 0.5f;
-      p.decay = 0.4f;
-      p.sweep = 0.5f;
-      p.level *= 0.8f;
-      clap_.trigger(p);
+      p.tone = v(DP_TONE);
+      p.sweep = v(DP_SNAP);
+      if (q[DP_MODEL] % 3 == DM_CLAP) {
+        p.tone = clamp01(p.tone + (p.tune - 0.5f) * 0.6f);  // a clap has no pitch: tune shifts its band
+        p.level *= 0.8f;
+        clap_.trigger(p);
+      } else {
+        p.variant = q[DP_MODEL] % 3 == DM_RIM ? 1 : 0;
+        snare_.trigger(p);
+      }
       break;
     default:
       p.variant = inst == DI_OH ? 1 : 0;
-      p.decay = dp[DP_HAT_DECAY] / 127.f;
-      p.tune = 0.55f;
-      p.tone = 0.6f;
-      p.sweep = 0.35f;
+      p.tone = v(DP_TONE);
+      p.sweep = v(DP_SNAP) * 0.8f;  // noise against metal
       p.level *= 0.55f;
       hat_.trigger(p);
       break;
   }
+  DrumMix& m = dmix_[voice];
+  float pan = v(DP_PAN);
+  m.gl = std::cos(pan * kPi * 0.5f) * 1.414f;
+  m.gr = std::sin(pan * kPi * 0.5f) * 1.414f;
+  float snd = v(DP_SEND);
+  m.send = snd * snd;
+  float a = attackSec(q[DP_ATTACK]);
+  if (a < 0.0005f) { m.atk = 1.f; m.atkInc = 1.f; }
+  else { m.atk = 0.f; m.atkInc = 1.f / (a * sr_); }
 }
 
 AcidParams AcidBox::voiceParams(int l) const {
@@ -979,14 +1034,20 @@ void AcidBox::render(float* L, float* R, int n) {
   float a[16], b[16];
   voice_[0].render(a, n);
   voice_[1].render(b, n);
-  float sa = proj_.line[0][LP_SEND] / 127.f, sb = proj_.line[1][LP_SEND] / 127.f, sd = proj_.drum[DP_SEND] / 127.f;
-  sa *= sa; sb *= sb; sd *= sd;
+  float sa = proj_.line[0][LP_SEND] / 127.f, sb = proj_.line[1][LP_SEND] / 127.f;
+  sa *= sa; sb *= sb;
   for (int i = 0; i < n; i++) {
-    float k = kick_.tick(), c = clap_.tick(), h = hat_.tick();
-    float drums = k + c * 0.9f + h;
-    float l = a[i] * 0.72f + b[i] * 0.5f + drums * 0.7f + h * 0.08f;
-    float r = a[i] * 0.72f + b[i] * 0.66f + drums * 0.7f - h * 0.08f;
-    float send = a[i] * sa + b[i] * sb + (c + h) * sd;
+    float dv[3] = {kick_.tick(), clap_.tick() + snare_.tick(), hat_.tick()};
+    float l = a[i] * 0.72f + b[i] * 0.5f, r = a[i] * 0.72f + b[i] * 0.66f;
+    float send = a[i] * sa + b[i] * sb;
+    for (int v = 0; v < 3; v++) {
+      DrumMix& m = dmix_[v];
+      if (m.atk < 1.f) { m.atk += m.atkInc; if (m.atk > 1.f) m.atk = 1.f; }
+      float x = dv[v] * m.atk * 0.7f;
+      l += x * m.gl;
+      r += x * m.gr;
+      send += x * m.send;
+    }
     float dl, dr;
     delay_.tick(send * 0.7f, dl, dr);
     L[i] = softclip((l + dl) * 0.85f);

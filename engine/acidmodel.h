@@ -12,7 +12,7 @@ constexpr int kPatterns = 16;
 constexpr int kLines = 2;         // acid lines A and B
 constexpr int kDrumInst = 4;      // kick, clap, closed hat, open hat
 constexpr uint32_t kMagic = 0x50564131;  // "PVA1"
-constexpr uint32_t kVersion = 1;
+constexpr uint32_t kVersion = 2;
 
 enum DrumInst : uint8_t { DI_KICK, DI_CLAP, DI_CH, DI_OH };
 
@@ -65,14 +65,22 @@ enum LineParam : uint8_t {
   LP_CUTOFF, LP_RESO, LP_ENVMOD, LP_DECAY, LP_ACCENT, LP_SLIDE, LP_WAVE, LP_TUNE,
   LP_DRIVE, LP_SUB, LP_LEVEL, LP_DIST, LP_LFO_RATE, LP_LFO_AMT, LP_SEND, LP_COUNT
 };
-enum DrumParam : uint8_t { DP_KICK_TUNE, DP_KICK_DECAY, DP_HAT_DECAY, DP_LEVEL, DP_DRIVE, DP_SEND, DP_COUNT };
+// Sound of one drum (per instrument: kick, clap/snare, closed hat, open hat)
+enum DrumParam : uint8_t {
+  DP_ATTACK, DP_DECAY, DP_SNAP, DP_LEVEL,  // amplitude: R1-R4
+  DP_TUNE, DP_TONE, DP_PAN, DP_SEND,       // FREQ, WAVE, LFO RATE, CHORUS AMT
+  DP_MODEL,                                // kick DEEP/PUNCH, slot 2 CLAP/SNARE/RIM
+  DP_COUNT
+};
+enum DrumModel2 : uint8_t { DM_CLAP, DM_SNARE, DM_RIM };
 
 struct Project {
   uint32_t magic;
   uint32_t version;
   Pattern patterns[kPatterns];
   uint8_t line[kLines][16];   // LineParam values 0..127
-  uint8_t drum[8];            // DrumParam values
+  uint8_t drum[kDrumInst][10];  // DrumParam values per instrument
+  uint8_t kitDrive;
   uint8_t bpm;
   uint8_t delayTime;
   uint8_t delayFb;
@@ -82,7 +90,7 @@ struct Project {
   uint8_t clockOut;
   uint8_t syncOut;
   uint8_t evolve;             // 0 off, else bars between mutations
-  uint8_t pad[3];
+  uint8_t pad[2];
 };
 
 const char* styleName(int s);

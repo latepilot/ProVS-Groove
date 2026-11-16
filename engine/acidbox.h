@@ -126,6 +126,7 @@ class AcidBox {
   void fireLine(int l, const acid::Step& s);
   void fireDrum(int inst, bool accent);
   AcidParams voiceParams(int l) const;
+  const char* drumName(int inst) const;
   void render(float* L, float* R, int n);
 
   float sr_ = 48000.f;
@@ -133,8 +134,11 @@ class AcidBox {
   Acid voice_[acid::kLines];
   Kick kick_;
   Perc clap_;
+  Snare snare_;
   Hat hat_;
   Delay delay_;
+  // per drum voice (kick, clap/snare, hat): attack ramp, pan and send, set at trigger
+  struct DrumMix { float gl = 0.7f, gr = 0.7f, send = 0, atk = 1, atkInc = 1; } dmix_[3];
   Rng rng_;
   uint64_t clock_ = 0;
 

@@ -184,7 +184,7 @@ A second firmware for the same panel, built around acid lines and a pattern gene
 
 **Sound**
 - **Two acid lines.** A is the bass, B a counter line an octave up. Each has the acid voice from ProVS Groove plus extras: saw-to-square morph, sub oscillator, drive with four shapes (soft, hard, fold, fuzz), level, and a tempo-synced LFO on the cutoff (1/16 to 8 bars).
-- **Drum lane:** kick, clap, closed and open hat (the open hat chokes the closed one).
+- **Drum lane:** kick, clap (or snare / rim), closed and open hat (the open hat chokes the closed one). Every drum has its own amplitude settings (attack 0-100 ms, decay, snap, level) plus tune, tone, pan and delay send.
 - Tempo-synced ping-pong delay with a send per line.
 - Sound settings are global (the knobs are live); notes live in 16 patterns. Patterns 1-8 ship with one line per style.
 
@@ -234,7 +234,8 @@ Generation is deterministic for a given seed (tested), so it can be replayed.
 | Control | Action |
 |---|---|
 | ENV | lane: line A → line B → drums (FIL / AMP / MIX LEDs) |
-| OSC | step-button layer: GATE / ACCENT / SLIDE / OCTAVE (A-D LEDs). On the drum lane: kick / clap / closed / open hat |
+| OSC | step-button layer: GATE / ACCENT / SLIDE / OCTAVE (A-D LEDs). On the drum lane: kick / clap / closed / open hat, which is also the drum the knobs edit |
+| FUNC + OSC (drum lane) | the drum's model: kick DEEP / PUNCH, slot 2 CLAP / SNARE / RIM |
 | LFO | keyboard mode: PLAY or TRANSPOSE (the first C = no transpose, latching) |
 | step tap | toggles the current layer on that step |
 | hold step + key / PROG± / FUNC+PROG± | note / octave / tie length |
@@ -248,7 +249,7 @@ Generation is deterministic for a given seed (tested), so it can be replayed.
 
 **FUNC + step:** 1 GEN, 2 MUTATE, 3 RHYTHM, 4 NOTES, 5 ACC/SLD, 6 UNDO, 7 STYLE (then step 1-8), 8 SCALE (then step 1-8; keys set the key), 9 EVOLVE, 10 ROTATE, 11 LEN, 12 COPY, 13 PASTE, 14 MUTE (steps 1-3), 15 PATTERN, 16 SAVE. FUNC + MEMORY WRITE = the same SETUP as ProVS Groove (MIDI clock / SYNC).
 
-**Knobs on a line:** R1-R4 = cutoff / resonance / env mod / decay (FUNC + R1-R3 = drive / sub / level), CUTOFF knob = accent, RESO knob = slide time, WAVE = saw-square (FUNC = distortion type), FREQ = tune ±12, LFO RATE / AMT = synced LFO on the cutoff, CHORUS RATE = delay time (FUNC = feedback), CHORUS AMT = delay send, TEMPO (FUNC = swing). On the drum lane: R1-R4 = kick tune / kick decay / hat decay / level, WAVE = drive, CHORUS AMT = send.
+**Knobs on a line:** R1-R4 = cutoff / resonance / env mod / decay (FUNC + R1-R3 = drive / sub / level), CUTOFF knob = accent, RESO knob = slide time, WAVE = saw-square (FUNC = distortion type), FREQ = tune ±12, LFO RATE / AMT = synced LFO on the cutoff, CHORUS RATE = delay time (FUNC = feedback), CHORUS AMT = delay send, TEMPO (FUNC = swing). On the drum lane the knobs edit the drum picked with OSC: R1-R4 = attack / decay / snap / level (snap = click on the kick, spread on the clap, snappy on the snare, noise on the hats), FREQ = tune, WAVE = tone (sweep on the kick), LFO RATE = pan, CHORUS AMT = delay send, FUNC + WAVE = drive for the whole kit.
 
 **On hardware** both lines use their digital filter; the analog filter could take over line A once the board's audio path is known. Project size: 4.7 KB. CPU: about 225× real time on a Mac (≈92 ns per stereo sample), in the same range as ProVS Groove.
 

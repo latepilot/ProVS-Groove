@@ -14,6 +14,7 @@ Right now it is a portable C++ engine and a desktop simulator of the real panel 
 ./build.sh            # bin/render (tests) + bin/provs-groove-sim
 ./bin/render out      # self-tests, out/demo.wav, OLED dumps, CPU benchmark
 ./bin/provs-groove-sim
+./bin/provs-groove-sim --video out/demo   # scripted demo video -> out/demo.mp4 (needs ffmpeg)
 ```
 
 Needs clang and SDL2 (`brew install sdl2`). Homebrew's SDL2 in `/usr/local` is x86_64, so the simulator is built for x86_64 and runs under Rosetta; `build.sh` picks the architecture from your SDL2. The engine and tests build natively.

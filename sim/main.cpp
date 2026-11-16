@@ -5,10 +5,12 @@
 //
 //   bin/provs-groove-sim                    interactive
 //   bin/provs-groove-sim --shot out.bmp     headless screenshot (demo playing)
+//   bin/provs-groove-sim --video out/demo   scripted demo video -> out/demo.mp4 (needs ffmpeg)
 #include <CoreMIDI/CoreMIDI.h>
 #include <SDL.h>
 #include <mach/mach_time.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <mutex>
@@ -472,10 +474,192 @@ static void saveState(const std::string& path) {
   std::printf("saved %s\n", path.c_str());
 }
 
+// ---------------------------------------------------------------- scripted demo video
+// --video out/demo   renders out/demo_video.rgb pipe -> ffmpeg (video only) and
+// out/demo.wav offline (faster than real time), then muxes out/demo.mp4.
+// Frame = 160 px caption strip with a x4 OLED view on top of the 1200x740 panel.
+static const int kStripH = 160, kVidH = kH + kStripH, kFps = 30;
+static std::string g_cap1, g_cap2;
+
+static int knobIndex(int pot) { for (size_t i = 0; i < knobs.size(); i++) if (knobs[i].pot == pot) return int(i); return -1; }
+// make the on-screen knobs match the current track's stored values (no jumps)
+static void syncKnobs() {
+  const Project& p = g_gb.project();
+  int t = g_gb.currentTrack();
+  const Track& tr = p.patterns[p.current].tracks[t];
+  if (t == kSynthTrack) return;
+  const int pots[9] = {K_R1, K_R2, K_R3, K_R4, K_FREQ, K_WAVE, K_LFO_RATE, K_LFO_AMT, K_CH_AMT};
+  const int slots[9] = {0, 1, 2, 3, 4, 5, 6, 7, P_SEND};
+  for (int i = 0; i < 9; i++) knobs[knobIndex(pots[i])].v = tr.p[slots[i]] / 127.f;
+}
+
+struct Anim { double t0, t1; int pot; float v0, v1; };  // pot -1 = joystick circle
+struct Cue { double t; int kind, a; float x; const char* s1; const char* s2; };
+enum { C_BTN_DN, C_BTN_UP, C_STEP_DN, C_STEP_UP, C_KEY_DN, C_KEY_UP, C_CAPTION, C_SYNC, C_ANIM_DUMMY };
+
+static void drawStrip() {
+  SDL_RenderSetViewport(R, nullptr);
+  color(0x0e0f12); fillRect(0, 0, kW, kStripH);
+  color(kBlue); fillRect(0, kStripH - 3, kW, 3);
+  const int S = 4, ox = 24, oy = 16;
+  color(0x3a3c40); drawRect(ox - 6, oy - 6, Display::W * S + 12, Display::H * S + 12);
+  SDL_Rect zd{ox, oy, Display::W * S, Display::H * S};
+  SDL_RenderCopy(R, oledTex, nullptr, &zd);
+  int tx = ox + Display::W * S + 34;
+  color(0x6a707a); text(tx, kStripH - 18, "<- the 128x32 OLED, magnified x4 (real size is on the panel below)");
+  color(0xffffff); text(tx, 34, g_cap1.c_str(), 3);
+  color(0xc8ccd4);
+  // wrap the second line at ~48 chars (scale 2 = 12 px per char)
+  std::string s = g_cap2;
+  int y = 78;
+  while (!s.empty() && y < kStripH - 20) {
+    size_t cut = s.size() <= 48 ? s.size() : s.rfind(' ', 48);
+    if (cut == std::string::npos || cut == 0) cut = std::min<size_t>(48, s.size());
+    text(tx, y, s.substr(0, cut).c_str(), 2);
+    s = cut < s.size() ? s.substr(cut + 1) : "";
+    y += 22;
+  }
+}
+
+static int runVideo(const std::string& base, float sr) {
+  std::vector<Cue> cues;
+  std::vector<Anim> anims;
+  auto cap = [&](double t, const char* a, const char* b) { cues.push_back({t, C_CAPTION, 0, 0, a, b}); };
+  auto btn = [&](double t, int b, double hold = 0.18) { cues.push_back({t, C_BTN_DN, b, 0, 0, 0}); cues.push_back({t + hold, C_BTN_UP, b, 0, 0, 0}); };
+  auto step = [&](double t, int s, double hold = 0.18) { cues.push_back({t, C_STEP_DN, s, 0, 0, 0}); cues.push_back({t + hold, C_STEP_UP, s, 0, 0, 0}); };
+  auto key = [&](double t, int k, double hold = 0.25) { cues.push_back({t, C_KEY_DN, k, 0, 0, 0}); cues.push_back({t + hold, C_KEY_UP, k, 0, 0, 0}); };
+  auto func = [&](double t, int s) { cues.push_back({t, C_BTN_DN, B_FUNC, 0, 0, 0}); step(t + 0.15, s, 0.15); cues.push_back({t + 0.4, C_BTN_UP, B_FUNC, 0, 0, 0}); };
+  auto knob = [&](double t0, double t1, int pot, float v1) { anims.push_back({t0, t1, pot, -1.f, v1}); };
+  auto sync = [&](double t) { cues.push_back({t, C_SYNC, 0, 0, 0, 0}); };
+
+  // ---- the script (120 BPM: one bar = 2 s)
+  cap(0.0, "ProVS Groove", "Groovebox firmware for the Behringer PRO-VS MINI, running in a desktop simulator of the real panel");
+  func(1.3, 6); step(1.9, 5); btn(2.2, B_FUNC, 0.1);           // mute the acid track for the intro
+  btn(2.6, B_PLAY);
+  cap(2.6, "Drums + vector synth", "4 synth drum tracks and the vector synth, 16-step sequencer with p-locks, ratchets and probability");
+  func(6.6, 2); sync(7.1);
+  cap(6.6, "One idea per screen", "Turn a knob: the tiny OLED shows just that parameter, big");
+  knob(7.4, 8.6, K_R2, 0.85f); knob(8.8, 10.0, K_R2, 0.25f);
+  cap(10.6, "Enter the ACID track", "Track 6: mono acid bass with its own resonant filter, accent and slide");
+  func(10.6, 6); step(11.2, 5); btn(11.5, B_FUNC, 0.1);         // unmute
+  func(11.9, 5); sync(12.4);                                     // select ACID
+  cap(14.6, "Cutoff, resonance, env mod", "R1-R4 = cutoff / reso / env mod / decay. Consecutive accents push the filter higher");
+  knob(14.8, 18.6, K_R1, 0.62f); knob(17.0, 19.0, K_R3, 0.95f); knob(19.0, 22.2, K_R4, 0.75f);
+  knob(20.0, 22.4, K_R1, 0.38f);
+  cap(22.6, "Drive", "LFO RATE = drive on the acid track");
+  knob(22.8, 25.0, K_LFO_RATE, 0.85f);
+  cap(26.6, "Joystick", "Live cutoff (X) and env mod (Y)");
+  anims.push_back({26.8, 30.4, -1, 0, 0});                       // joystick circle
+  cap(30.6, "Edit a step", "Hold a step: ENV = accent, LFO = slide, a key = the note");
+  cues.push_back({31.0, C_STEP_DN, 3, 0, 0, 0});
+  btn(31.4, B_ENV_SEL); btn(31.8, B_LFO_SEL); key(32.2, 14, 0.3);
+  cues.push_back({32.9, C_STEP_UP, 3, 0, 0, 0});
+  cues.push_back({33.4, C_STEP_DN, 8, 0, 0, 0});
+  btn(33.8, B_LFO_SEL); key(34.2, 19, 0.3);
+  cues.push_back({34.9, C_STEP_UP, 8, 0, 0, 0});
+  cap(36.6, "DICE", "FUNC + 13 rolls a new line: notes, accents and slides");
+  func(36.8, 12);
+  cap(42.6, "Saw / square", "OSC button switches the oscillator");
+  btn(42.8, B_OSC_SEL); knob(43.4, 46.4, K_R1, 0.55f);
+  cap(46.6, "Engine done", "Next step: Behringer's firmware packer, so it can run on the real synth");
+  knob(47.0, 50.6, K_R1, 0.2f);
+  cap(50.6, "github.com/latepilot/ProVS-Groove", "Vibe-coded with Claude (Anthropic). Open source, AGPL-3.0");
+  const double kLen = 54.0, kFade = 2.5;
+  std::stable_sort(cues.begin(), cues.end(), [](const Cue& a, const Cue& b) { return a.t < b.t; });
+
+  std::string vid = base + "_video.mp4", wav = base + ".wav", mp4 = base + ".mp4";
+  char cmd[1024];
+  std::snprintf(cmd, sizeof cmd,
+                "ffmpeg -loglevel error -y -f rawvideo -pix_fmt bgra -s %dx%d -r %d -i - -c:v libx264 -preset slow -crf 20 "
+                "-tune animation -pix_fmt yuv420p \"%s\"", kW, kVidH, kFps, vid.c_str());
+  FILE* ff = popen(cmd, "w");
+  if (!ff) { std::printf("cannot start ffmpeg\n"); return 1; }
+  std::vector<int16_t> pcm;
+  SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, kW, kVidH, 32, SDL_PIXELFORMAT_ARGB8888);
+  size_t ci = 0;
+  uint64_t total = uint64_t(kLen * sr);
+  int frames = int(kLen * kFps);
+  float L[256], Rr[256];
+  for (int f = 0; f < frames; f++) {
+    uint64_t end = uint64_t(double(f + 1) / kFps * sr);
+    while (g_gb.sampleClock() < end) {
+      double now = double(g_gb.sampleClock()) / sr;
+      while (ci < cues.size() && cues[ci].t <= now + 1e-9) {
+        const Cue& c = cues[ci++];
+        switch (c.kind) {
+          case C_BTN_DN: setBtn(c.a, true); break;
+          case C_BTN_UP: setBtn(c.a, false); break;
+          case C_STEP_DN: setStep(c.a, true); break;
+          case C_STEP_UP: setStep(c.a, false); break;
+          case C_KEY_DN: setKey(c.a, true); break;
+          case C_KEY_UP: setKey(c.a, false); break;
+          case C_CAPTION: g_cap1 = c.s1; g_cap2 = c.s2; break;
+          case C_SYNC: syncKnobs(); break;
+        }
+      }
+      for (auto& a : anims) {
+        if (now < a.t0 || now > a.t1 + 0.01) continue;
+        float u = float(clamp01((now - a.t0) / (a.t1 - a.t0)));
+        float e = u * u * (3.f - 2.f * u);  // ease in/out
+        if (a.pot < 0) {
+          float ang = e * 2.f * kTwoPi, r = std::sin(u * kPi) * 0.95f;
+          joyX = std::cos(ang) * r; joyY = std::sin(ang) * r;
+          if (u >= 1.f) joyX = joyY = 0;
+          g_gb.joystick(joyX, joyY);
+          continue;
+        }
+        Knob& k = knobs[knobIndex(a.pot)];
+        if (a.v0 < 0) a.v0 = k.v;  // start from wherever the knob is
+        k.v = a.v0 + (a.v1 - a.v0) * e;
+        g_gb.pot(a.pot, k.v);
+      }
+      uint64_t next = end;
+      if (ci < cues.size()) next = std::min<uint64_t>(next, uint64_t(cues[ci].t * sr) + 1);
+      int n = int(std::min<uint64_t>(256, next > g_gb.sampleClock() ? next - g_gb.sampleClock() : 1));
+      g_gb.process(L, Rr, n);
+      OutEvent oe;
+      while (g_gb.popOutput(oe)) {}
+      for (int i = 0; i < n; i++) {
+        double t = double(pcm.size() / 2) / sr;
+        float g = t > kLen - kFade ? float(std::max(0.0, (kLen - t) / kFade)) : 1.f;
+        if (t < 0.05) g *= float(t / 0.05);
+        pcm.push_back(int16_t(clampf(L[i] * g, -1.f, 1.f) * 32000.f));
+        pcm.push_back(int16_t(clampf(Rr[i] * g, -1.f, 1.f) * 32000.f));
+      }
+    }
+    SDL_RenderSetViewport(R, nullptr);
+    color(0xd9d6cf); SDL_RenderClear(R);
+    SDL_Rect vp{0, kStripH, kW, kH};
+    SDL_RenderSetViewport(R, &vp);
+    drawPanel();
+    drawStrip();
+    SDL_RenderReadPixels(R, nullptr, SDL_PIXELFORMAT_ARGB8888, surf->pixels, surf->pitch);
+    for (int y = 0; y < kVidH; y++) fwrite(static_cast<uint8_t*>(surf->pixels) + y * surf->pitch, 4, kW, ff);
+    if (f % (kFps * 5) == 0) { std::printf("  %d / %d s\n", f / kFps, int(kLen)); std::fflush(stdout); }
+  }
+  pclose(ff);
+  (void)total;
+  // wav
+  FILE* w = std::fopen(wav.c_str(), "wb");
+  uint32_t ds = uint32_t(pcm.size() * 2), srI = uint32_t(sr);
+  uint32_t hdr[11] = {0x46464952, 36 + ds, 0x45564157, 0x20746d66, 16, 0x00020001, srI, srI * 4, 0x00100004, 0x61746164, ds};
+  std::fwrite(hdr, 4, 11, w);
+  std::fwrite(pcm.data(), 2, pcm.size(), w);
+  std::fclose(w);
+  std::snprintf(cmd, sizeof cmd, "ffmpeg -loglevel error -y -i \"%s\" -i \"%s\" -c:v copy -c:a aac -b:a 192k -movflags +faststart -shortest \"%s\"",
+                vid.c_str(), wav.c_str(), mp4.c_str());
+  int rc = std::system(cmd);
+  std::remove(vid.c_str());
+  std::printf("wrote %s\n", mp4.c_str());
+  return rc;
+}
+
 int main(int argc, char** argv) {
   const char* shot = nullptr;
+  const char* video = nullptr;
   for (int i = 1; i < argc; i++)
     if (!std::strcmp(argv[i], "--shot") && i + 1 < argc) shot = argv[++i];
+    else if (!std::strcmp(argv[i], "--video") && i + 1 < argc) shot = video = argv[++i];
     else if (!std::strcmp(argv[i], "--zoom")) zoom = true;
 
   if (SDL_Init(SDL_INIT_VIDEO | (shot ? 0 : SDL_INIT_AUDIO)) != 0) { std::printf("SDL: %s\n", SDL_GetError()); return 1; }
@@ -494,13 +678,14 @@ int main(int argc, char** argv) {
   }
   g_gb.init(sr);
   std::string state = statePath(argv[0]);
-  loadState(state);
+  if (!video) loadState(state);  // the video always uses the built-in demo
 
-  SDL_Window* win = SDL_CreateWindow("ProVS Groove - simulator", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, kW, kH,
-                                     shot ? SDL_WINDOW_HIDDEN : 0);
+  SDL_Window* win = SDL_CreateWindow("ProVS Groove - simulator", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, kW,
+                                     video ? kVidH : kH, shot ? SDL_WINDOW_HIDDEN : 0);
   R = SDL_CreateRenderer(win, -1, shot ? SDL_RENDERER_SOFTWARE : (SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC));
-  SDL_RenderSetLogicalSize(R, kW, kH);
+  if (!video) SDL_RenderSetLogicalSize(R, kW, kH);
   oledTex = SDL_CreateTexture(R, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, Display::W, Display::H);
+  if (video) { int rc = runVideo(video, sr); SDL_Quit(); return rc; }
 
   if (shot) {
     float L[256], Rr[256];

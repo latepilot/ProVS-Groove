@@ -2,6 +2,7 @@
 // Plain POD so it can be memcpy'd to flash / a file.
 #pragma once
 #include <cstdint>
+#include "panel.h"  // ClockSrc, kSyncPpqn
 
 namespace pvg {
 
@@ -16,8 +17,6 @@ constexpr uint8_t kNoNote = 0xFF;
 constexpr uint32_t kProjectMagic = 0x50564731;  // "PVG1"
 constexpr uint32_t kProjectVersion = 4;
 
-enum ClockSrc : uint8_t { CLK_INT, CLK_MIDI, CLK_SYNC };
-static const uint8_t kSyncPpqn[4] = {1, 2, 4, 24};  // pulses per quarter on the SYNC jack
 
 enum TrackType : uint8_t { TT_KICK, TT_SNARE, TT_HAT, TT_PERC, TT_SYNTH, TT_ACID };
 inline bool isDrum(int t) { return t < TT_SYNTH; }

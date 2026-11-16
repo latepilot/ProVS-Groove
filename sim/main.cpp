@@ -19,11 +19,25 @@
 #include <string>
 #include <vector>
 
+#ifdef PVA_ACID
+#include "../engine/acidbox.h"
+using Engine = pvg::AcidBox;
+#define FW_FUNC_NAME acidFuncName
+static const char* kFwTitle = "ProVS Acid - simulator";
+static const char* kFwSub = "+ ACID fw (sim)";
+static const char* kStateFile = "/../state/acid.pva";
+#else
 #include "../engine/groovebox.h"
+using Engine = pvg::Groovebox;
+#define FW_FUNC_NAME funcName
+static const char* kFwTitle = "ProVS Groove - simulator";
+static const char* kFwSub = "+ GROOVE fw (sim)";
+static const char* kStateFile = "/../state/project.pvg";
+#endif
 
 using namespace pvg;
 
-static Groovebox g_gb;
+static Engine g_gb;
 static SDL_AudioDeviceID g_dev = 0;
 static const int kW = 1200, kH = 740;
 static SDL_Renderer* R = nullptr;
@@ -187,9 +201,15 @@ static std::vector<Btn> btns = {
 };
 static const int kBtnHalf = 24;
 struct SelLed { int led, y; const char* label; };
+#ifdef PVA_ACID  // sim-only stickers: what the selector LEDs mean in this firmware
+static const SelLed kSelLeds[] = {{LED_ENV_FIL, 198, "A"},   {LED_ENV_AMP, 218, "B"},   {LED_ENV_MIX, 238, "DR"},
+                                  {LED_LFO1, 296, "PLY"},    {LED_LFO2, 316, "TRS"},
+                                  {LED_OSC_A, 368, "GAT"},   {LED_OSC_B, 386, "ACC"},   {LED_OSC_C, 404, "SLD"}, {LED_OSC_D, 422, "OCT"}};
+#else
 static const SelLed kSelLeds[] = {{LED_ENV_FIL, 198, "FIL"}, {LED_ENV_AMP, 218, "AMP"}, {LED_ENV_MIX, 238, "MIX"},
                                   {LED_LFO1, 296, "1"},      {LED_LFO2, 316, "2"},
                                   {LED_OSC_A, 368, "A"},     {LED_OSC_B, 386, "B"},   {LED_OSC_C, 404, "C"}, {LED_OSC_D, 422, "D"}};
+#endif
 static const int kJoyCX = 150, kJoyCY = 300, kJoyR = 72;
 static const int kOledX = 303, kOledY = 86;
 static const int kKbX = 80, kKbY = 520, kKbH = 92;
@@ -276,11 +296,16 @@ static int scanToBtn(SDL_Scancode s) {
 
 // ---------------------------------------------------------------- render
 static SDL_Texture* oledTex = nullptr;
-static const Uint32 kBlue = 0x2b8fe0, kPanel = 0x1c1d20, kLabel = 0xe8e8e8, kDim = 0x8a9099;
+#ifdef PVA_ACID  // acid theme: lime instead of blue
+static const Uint32 kBlue = 0xb4ff1e, kBarText = 0x142000, kOledOn = 0xFFB4FF1E;
+#else
+static const Uint32 kBlue = 0x2b8fe0, kBarText = 0x0b1a2a, kOledOn = 0xFF45E6FF;
+#endif
+static const Uint32 kPanel = 0x1c1d20, kLabel = 0xe8e8e8, kDim = 0x8a9099;
 
 static void sectionBar(int x, int y, int w, const char* s) {
   color(kBlue); fillRect(x, y, w, 11);
-  color(0x0b1a2a); text(x + 4, y + 2, s);
+  color(kBarText); text(x + 4, y + 2, s);
 }
 
 static void drawPanel() {
@@ -301,7 +326,7 @@ static void drawPanel() {
   // OLED (1:1) + bezel
   static uint32_t px[Display::W * Display::H];
   for (int y = 0; y < Display::H; y++)
-    for (int x = 0; x < Display::W; x++) px[y * Display::W + x] = d.get(x, y) ? 0xFF45E6FF : 0xFF04080A;
+    for (int x = 0; x < Display::W; x++) px[y * Display::W + x] = d.get(x, y) ? kOledOn : 0xFF04080A;
   SDL_UpdateTexture(oledTex, nullptr, px, Display::W * 4);
   color(0x3a3c40); drawRect(kOledX - 10, kOledY - 9, Display::W + 20, Display::H + 18);
   color(0x04080a); fillRect(kOledX - 9, kOledY - 8, Display::W + 18, Display::H + 16);
@@ -312,7 +337,7 @@ static void drawPanel() {
   // logo, jacks
   color(kBlue); text(560, 62, "Pro VS", 3); color(0xffffff); text(680, 70, "MINI", 2);
   color(kLabel); text(560, 92, "HYBRID VECTOR SYNTHESIZER");
-  color(0x8f8f8f); text(560, 106, "+ GROOVE fw (sim)");
+  color(0x8f8f8f); text(560, 106, kFwSub);
   const struct { int x; const char* n; int r; } jacks[] = {{800, "VOLUME", 13}, {880, "PHONES", 12}, {950, "SYNC", 12}, {1050, "MIDI IN", 26}};
   uint32_t nowMs = SDL_GetTicks();
   for (auto& j : jacks) {
@@ -344,11 +369,19 @@ static void drawPanel() {
   color(kDim); textC(kJoyCX, kJoyCY + kJoyR + 30, "WAVEFORM MIX");
 
   // section bars + knobs
+#ifdef PVA_ACID
+  sectionBar(520, 178, 370, "CUTOFF  RESO  ENV MOD  DECAY  (FUNC: DRIVE SUB LEVEL)");
+  sectionBar(520, 269, 150, "LFO > CUTOFF");
+  sectionBar(735, 269, 155, "ACCENT  SLIDE");
+  sectionBar(520, 360, 150, "WAVE   TUNE");
+  sectionBar(735, 360, 155, "DELAY TIME/SEND");
+#else
   sectionBar(520, 178, 370, "ENVELOPE  (drums: TUNE DECAY TONE LEVEL)");
   sectionBar(520, 269, 150, "LFO");
   sectionBar(735, 269, 155, "ANALOG FILTER");
   sectionBar(520, 360, 150, "OSC");
   sectionBar(735, 360, 155, "CHORUS");
+#endif
   for (auto& k : knobs) {
     color(0x0a0a0b); disc(k.x, k.y, k.r);
     color(0x4a4a4e); ring(k.x, k.y, k.r);
@@ -418,7 +451,7 @@ static void drawPanel() {
     color(on ? 0xff3030 : 0x351818); disc(cx, kStepY + kStepH - 12, 5);
     char n[4]; std::snprintf(n, sizeof n, "%d", i + 1);
     color(kLabel); textC(cx, kStepY + 18, n, 2);
-    color(0xffc75a); textC(cx, kStepY + 6, funcName(i));
+    color(0xffc75a); textC(cx, kStepY + 6, FW_FUNC_NAME(i));
     if (stepLatched[i]) { color(0x3d7bd9); fillRect(cx - kStepW / 2 + 2, kStepY + kStepH - 4, kStepW - 4, 3); }
   }
   color(0x55565c);
@@ -452,18 +485,18 @@ static void audioCb(void*, Uint8* stream, int len) {
 static std::string statePath(const char* argv0) {
   std::string p(argv0);
   size_t s = p.find_last_of('/');
-  return (s == std::string::npos ? std::string(".") : p.substr(0, s)) + "/../state/project.pvg";
+  return (s == std::string::npos ? std::string(".") : p.substr(0, s)) + kStateFile;
 }
 static void loadState(const std::string& path) {
   FILE* f = std::fopen(path.c_str(), "rb");
   if (!f) return;
-  std::vector<uint8_t> buf(sizeof(Project));
+  std::vector<uint8_t> buf(sizeof(Engine::ProjectType));
   size_t n = std::fread(buf.data(), 1, buf.size(), f);
   std::fclose(f);
   if (g_gb.loadProject(buf.data(), n)) std::printf("loaded %s\n", path.c_str());
 }
 static void saveState(const std::string& path) {
-  std::vector<uint8_t> buf(sizeof(Project));
+  std::vector<uint8_t> buf(sizeof(Engine::ProjectType));
   SDL_LockAudioDevice(g_dev);
   std::memcpy(buf.data(), &g_gb.project(), buf.size());
   SDL_UnlockAudioDevice(g_dev);
@@ -483,6 +516,17 @@ static std::string g_cap1, g_cap2;
 
 static int knobIndex(int pot) { for (size_t i = 0; i < knobs.size(); i++) if (knobs[i].pot == pot) return int(i); return -1; }
 // make the on-screen knobs match the current track's stored values (no jumps)
+#ifdef PVA_ACID
+static void syncKnobs() {
+  int l = g_gb.lane();
+  if (l > 1) return;
+  const uint8_t* q = g_gb.project().line[l];
+  const int pots[11] = {K_R1, K_R2, K_R3, K_R4, K_LFO_RATE, K_LFO_AMT, K_CUTOFF, K_RESO, K_WAVE, K_FREQ, K_CH_AMT};
+  const int lp[11] = {acid::LP_CUTOFF, acid::LP_RESO, acid::LP_ENVMOD, acid::LP_DECAY, acid::LP_LFO_RATE, acid::LP_LFO_AMT,
+                      acid::LP_ACCENT, acid::LP_SLIDE, acid::LP_WAVE, acid::LP_TUNE, acid::LP_SEND};
+  for (int i = 0; i < 11; i++) knobs[knobIndex(pots[i])].v = q[lp[i]] / 127.f;
+}
+#else
 static void syncKnobs() {
   const Project& p = g_gb.project();
   int t = g_gb.currentTrack();
@@ -492,6 +536,7 @@ static void syncKnobs() {
   const int slots[9] = {0, 1, 2, 3, 4, 5, 6, 7, P_SEND};
   for (int i = 0; i < 9; i++) knobs[knobIndex(pots[i])].v = tr.p[slots[i]] / 127.f;
 }
+#endif
 
 struct Anim { double t0, t1; int pot; float v0, v1; };  // pot -1 = joystick circle
 struct Cue { double t; int kind, a; float x; const char* s1; const char* s2; };
@@ -521,28 +566,28 @@ static void drawStrip() {
   }
 }
 
-static int runVideo(const std::string& base, float sr) {
-  std::vector<Cue> cues;
-  std::vector<Anim> anims;
-  auto cap = [&](double t, const char* a, const char* b) { cues.push_back({t, C_CAPTION, 0, 0, a, b}); };
-  auto btn = [&](double t, int b, double hold = 0.18) { cues.push_back({t, C_BTN_DN, b, 0, 0, 0}); cues.push_back({t + hold, C_BTN_UP, b, 0, 0, 0}); };
-  auto step = [&](double t, int s, double hold = 0.18) { cues.push_back({t, C_STEP_DN, s, 0, 0, 0}); cues.push_back({t + hold, C_STEP_UP, s, 0, 0, 0}); };
-  auto key = [&](double t, int k, double hold = 0.25) { cues.push_back({t, C_KEY_DN, k, 0, 0, 0}); cues.push_back({t + hold, C_KEY_UP, k, 0, 0, 0}); };
-  auto func = [&](double t, int s) { cues.push_back({t, C_BTN_DN, B_FUNC, 0, 0, 0}); step(t + 0.15, s, 0.15); cues.push_back({t + 0.4, C_BTN_UP, B_FUNC, 0, 0, 0}); };
-  auto knob = [&](double t0, double t1, int pot, float v1) { anims.push_back({t0, t1, pot, -1.f, v1}); };
-  auto sync = [&](double t) { cues.push_back({t, C_SYNC, 0, 0, 0, 0}); };
+static std::vector<Cue> cues;
+static std::vector<Anim> anims;
+static void cap(double t, const char* a, const char* b) { cues.push_back({t, C_CAPTION, 0, 0, a, b}); }
+static void btn(double t, int b, double hold = 0.18) { cues.push_back({t, C_BTN_DN, b, 0, 0, 0}); cues.push_back({t + hold, C_BTN_UP, b, 0, 0, 0}); }
+static void step(double t, int s, double hold = 0.18) { cues.push_back({t, C_STEP_DN, s, 0, 0, 0}); cues.push_back({t + hold, C_STEP_UP, s, 0, 0, 0}); }
+static void key(double t, int k, double hold = 0.25) { cues.push_back({t, C_KEY_DN, k, 0, 0, 0}); cues.push_back({t + hold, C_KEY_UP, k, 0, 0, 0}); }
+static void func(double t, int s) { cues.push_back({t, C_BTN_DN, B_FUNC, 0, 0, 0}); step(t + 0.15, s, 0.15); cues.push_back({t + 0.4, C_BTN_UP, B_FUNC, 0, 0, 0}); }
+static void knob(double t0, double t1, int pot, float v1) { anims.push_back({t0, t1, pot, -1.f, v1}); }
+static void syncK(double t) { cues.push_back({t, C_SYNC, 0, 0, 0, 0}); }
 
-  // ---- the script (120 BPM: one bar = 2 s)
+#ifndef PVA_ACID
+static double script() {  // ProVS Groove (120 BPM: one bar = 2 s)
   cap(0.0, "ProVS Groove", "Groovebox firmware for the Behringer PRO-VS MINI, running in a desktop simulator of the real panel");
   func(1.3, 6); step(1.9, 5); btn(2.2, B_FUNC, 0.1);           // mute the acid track for the intro
   btn(2.6, B_PLAY);
   cap(2.6, "Drums + vector synth", "4 synth drum tracks and the vector synth, 16-step sequencer with p-locks, ratchets and probability");
-  func(6.6, 2); sync(7.1);
+  func(6.6, 2); syncK(7.1);
   cap(6.6, "One idea per screen", "Turn a knob: the tiny OLED shows just that parameter, big");
   knob(7.4, 8.6, K_R2, 0.85f); knob(8.8, 10.0, K_R2, 0.25f);
   cap(10.6, "Enter the ACID track", "Track 6: mono acid bass with its own resonant filter, accent and slide");
   func(10.6, 6); step(11.2, 5); btn(11.5, B_FUNC, 0.1);         // unmute
-  func(11.9, 5); sync(12.4);                                     // select ACID
+  func(11.9, 5); syncK(12.4);                                     // select ACID
   cap(14.6, "Cutoff, resonance, env mod", "R1-R4 = cutoff / reso / env mod / decay. Consecutive accents push the filter higher");
   knob(14.8, 18.6, K_R1, 0.62f); knob(17.0, 19.0, K_R3, 0.95f); knob(19.0, 22.2, K_R4, 0.75f);
   knob(20.0, 22.4, K_R1, 0.38f);
@@ -564,7 +609,44 @@ static int runVideo(const std::string& base, float sr) {
   cap(46.6, "Engine done", "Next step: Behringer's firmware packer, so it can run on the real synth");
   knob(47.0, 50.6, K_R1, 0.2f);
   cap(50.6, "github.com/latepilot/ProVS-Groove", "Vibe-coded with Claude (Anthropic). Open source, AGPL-3.0");
-  const double kLen = 54.0, kFade = 2.5;
+  return 54.0;
+}
+#else
+static double script() {  // ProVS Acid (126 BPM: one bar = 1.9 s)
+  cap(0.0, "ProVS Acid", "A dedicated acid firmware for the PRO-VS MINI: two acid lines, drums and a pattern generator");
+  btn(2.0, B_PLAY);
+  cap(2.0, "Line A + drums", "Starter pattern 1: CLASSIC style in A minor, all written by the generator");
+  cap(6.2, "Twist the filter", "R1-R4 = cutoff / resonance / env mod / decay, with accent and slide on their own knobs");
+  knob(6.4, 9.6, K_R1, 0.62f); knob(8.0, 10.4, K_R3, 0.95f); knob(10.0, 12.0, K_R1, 0.36f);
+  cap(12.4, "Generate", "FUNC + 1 writes a new line in the current style, scale and key");
+  func(12.6, 0); func(16.4, 0);
+  cap(20.0, "Style, scale, key", "FUNC + 7 = style (8 kinds), FUNC + 8 = scale, the keyboard sets the key");
+  func(20.2, 6); step(20.8, 1);
+  func(21.6, 7); key(22.2, 12); step(22.8, 1);
+  func(23.4, 0);
+  cap(27.6, "Density and wildness", "Hold FUNC and push the joystick: X = how many notes, Y = how wild");
+  cues.push_back({27.8, C_BTN_DN, B_FUNC, 0, 0, 0});
+  anims.push_back({28.0, 29.4, -2, 0.75f, 0.85f});
+  cues.push_back({29.6, C_BTN_UP, B_FUNC, 0, 0, 0});
+  func(30.0, 0);
+  cap(33.4, "Mutate, rhythm, notes", "FUNC + 2 mutates a few steps, FUNC + 3 = new rhythm, FUNC + 4 = new notes, FUNC + 6 = undo");
+  func(33.6, 1); func(35.5, 2); func(37.4, 3); func(39.3, 5);
+  cap(41.0, "Line B", "ENV switches to line B: a counter line that answers line A");
+  btn(41.2, B_ENV_SEL); syncK(41.5); func(41.8, 0);
+  cap(45.4, "Accent and slide layers", "OSC flips the step buttons between gate, accent, slide and octave");
+  btn(45.6, B_OSC_SEL); step(46.2, 2); step(46.7, 10); btn(47.2, B_OSC_SEL); step(47.7, 6);
+  btn(48.4, B_OSC_SEL); btn(48.6, B_OSC_SEL);
+  cap(49.4, "Evolve + synced LFO", "FUNC + 9: the pattern mutates by itself every few bars. LFO sweeps the cutoff in time");
+  btn(49.6, B_ENV_SEL); btn(49.9, B_ENV_SEL); syncK(50.2);
+  func(50.4, 8);
+  knob(51.0, 53.0, K_LFO_RATE, 0.62f); knob(51.2, 54.0, K_LFO_AMT, 0.5f);
+  cap(58.6, "github.com/latepilot/ProVS-Groove", "Vibe-coded with Claude (Anthropic). Open source, AGPL-3.0");
+  return 63.0;
+}
+#endif
+
+static int runVideo(const std::string& base, float sr) {
+  const double kLen = script(), kFade = 2.5;
   std::stable_sort(cues.begin(), cues.end(), [](const Cue& a, const Cue& b) { return a.t < b.t; });
 
   std::string vid = base + "_video.mp4", wav = base + ".wav", mp4 = base + ".mp4";
@@ -601,6 +683,13 @@ static int runVideo(const std::string& base, float sr) {
         if (now < a.t0 || now > a.t1 + 0.01) continue;
         float u = float(clamp01((now - a.t0) / (a.t1 - a.t0)));
         float e = u * u * (3.f - 2.f * u);  // ease in/out
+        if (a.pot == -2) {  // push towards (v0, v1) and spring back
+          float r = std::sin(u * kPi);
+          joyX = a.v0 * r; joyY = a.v1 * r;
+          if (u >= 1.f) joyX = joyY = 0;
+          g_gb.joystick(joyX, joyY);
+          continue;
+        }
         if (a.pot < 0) {
           float ang = e * 2.f * kTwoPi, r = std::sin(u * kPi) * 0.95f;
           joyX = std::cos(ang) * r; joyY = std::sin(ang) * r;
@@ -679,8 +768,11 @@ int main(int argc, char** argv) {
   g_gb.init(sr);
   std::string state = statePath(argv[0]);
   if (!video) loadState(state);  // the video always uses the built-in demo
+#ifdef PVA_ACID
+  syncKnobs();
+#endif
 
-  SDL_Window* win = SDL_CreateWindow("ProVS Groove - simulator", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, kW,
+  SDL_Window* win = SDL_CreateWindow(kFwTitle, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, kW,
                                      video ? kVidH : kH, shot ? SDL_WINDOW_HIDDEN : 0);
   R = SDL_CreateRenderer(win, -1, shot ? SDL_RENDERER_SOFTWARE : (SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC));
   if (!video) SDL_RenderSetLogicalSize(R, kW, kH);
@@ -773,6 +865,15 @@ int main(int argc, char** argv) {
     }
     lk.unlock();
     if (g_gb.takeSaveRequest()) saveState(state);
+#ifdef PVA_ACID
+    {  // knobs follow the selected lane's sound
+      static int lastLane = -1;
+      SDL_LockAudioDevice(g_dev);
+      int ln = g_gb.lane();
+      if (ln != lastLane) { lastLane = ln; syncKnobs(); }
+      SDL_UnlockAudioDevice(g_dev);
+    }
+#endif
     drawPanel();
     SDL_RenderPresent(R);
   }

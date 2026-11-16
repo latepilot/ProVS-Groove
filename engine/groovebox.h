@@ -20,35 +20,16 @@
 #include "drums.h"
 #include "fx.h"
 #include "model.h"
+#include "panel.h"
 #include "synth.h"
 
 namespace pvg {
 
-enum Button : uint8_t {
-  B_PROG_DN, B_PROG_UP, B_ENV_SEL, B_LFO_SEL, B_OSC_SEL,
-  B_MEMWRITE, B_PLAY, B_FUNC, B_REC, B_COUNT
-};
-enum Pot : uint8_t {
-  K_R1, K_R2, K_R3, K_R4, K_LFO_RATE, K_LFO_AMT, K_CUTOFF, K_RESO,
-  K_WAVE, K_FREQ, K_CH_RATE, K_CH_AMT, K_TEMPO, K_COUNT
-};
-enum Led : uint8_t {
-  LED_ENV_FIL, LED_ENV_AMP, LED_ENV_MIX, LED_LFO1, LED_LFO2,
-  LED_OSC_A, LED_OSC_B, LED_OSC_C, LED_OSC_D, LED_PLAY, LED_REC, LED_FUNC, LED_COUNT
-};
 // FUNC + step button commands
 enum FuncCmd : uint8_t {
   F_TRK1, F_TRK2, F_TRK3, F_TRK4, F_TRK5, F_TRK6, F_MUTE, F_CLEAR_ALL,
   F_COPY, F_PASTE, F_LEN, F_EUCLID, F_DICE, F_PATTERN, F_KEYS, F_STORE
 };
-// Outgoing timing events, timestamped in samples (engine sample clock).
-// OUT_MIDI: 1..3 MIDI bytes (clock 0xF8, start 0xFA, stop 0xFC) for USB MIDI.
-// OUT_SYNC: rising edge for the SYNC jack (HAL keeps it high ~5 ms).
-enum OutType : uint8_t { OUT_MIDI, OUT_SYNC };
-struct OutEvent { uint64_t time; uint8_t type, len; uint8_t b[3]; };
-
-constexpr int kNumKeys = 27;      // capacitive strip F..G (16 white + 11 black pads)
-constexpr int kKeyBaseNote = 41;  // lowest key at octave 0 = F2
 constexpr int kDrumBaseKey = 7;   // first C: plays a drum unpitched
 
 const char* buttonName(int b);
@@ -56,10 +37,10 @@ const char* potName(int p);
 const char* funcName(int step);
 const char* trackName(int t);
 const char* paramName(int track, int slot);
-bool keyIsBlack(int k);
 
 class Groovebox {
  public:
+  using ProjectType = Project;
   void init(float sampleRate);
   void process(float* outL, float* outR, int n);
 

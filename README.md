@@ -2,6 +2,8 @@
 
 A groovebox firmware for the **Behringer PRO-VS MINI**: four synthesized drum tracks, the vector synth and an acid bass line, a 16-step sequencer with parameter locks, and MIDI clock / SYNC.
 
+There are two firmwares in this repo, sharing the panel code and the simulator: **ProVS Groove** (this page, below) and **[ProVS Acid](#provs-acid-a-dedicated-acid-firmware)**, a dedicated acid machine with a pattern generator.
+
 Right now it is a portable C++ engine and a desktop simulator of the real panel (macOS, SDL2). **It cannot be put on the hardware yet**: there is no safe, supported way to flash the PRO-VS MINI. See [Getting it onto the hardware](#getting-it-onto-the-hardware).
 
 ![The acid track in the simulator (silent preview)](docs/demo.gif)
@@ -17,6 +19,8 @@ Right now it is a portable C++ engine and a desktop simulator of the real panel 
 ./bin/render out      # self-tests, out/demo.wav, OLED dumps, CPU benchmark
 ./bin/provs-groove-sim
 ./bin/provs-groove-sim --video out/demo   # scripted demo video -> out/demo.mp4 (needs ffmpeg)
+./bin/acid-test out   # ProVS Acid self-tests, out/acid_demo.wav
+./bin/provs-acid-sim  # ProVS Acid simulator (--video out/acid for its demo)
 ```
 
 Needs clang and SDL2 (`brew install sdl2`). Homebrew's SDL2 in `/usr/local` is x86_64, so the simulator is built for x86_64 and runs under Rosetta; `build.sh` picks the architecture from your SDL2. The engine and tests build natively.
@@ -124,11 +128,16 @@ engine/            portable core: no dependencies, no allocation in the audio pa
   groovebox.*      UI logic, sequencer, mixer; lock-free event queue
   synth.*          vector synth + wavetable generation at startup
   acid.h           acid bass voice (own digital filter)
+  panel.h          buttons, pots, LEDs, keys: shared by both firmwares
+  acidbox.*        ProVS Acid firmware (UI, sequencer, mixer)
+  acidgen.*        ProVS Acid pattern generator
+  acidmodel.h      ProVS Acid data model
   drums.h fx.h dsp.h
   display.h        128×32 1-bit buffer in SSD1306 page layout (sent to the OLED as is)
   model.h          POD project (~76 KB), written to flash with memcpy
-sim/main.cpp       SDL2: panel, mouse/keyboard, audio, CoreMIDI
-tools/render.cpp   tests, demo.wav, benchmark
+sim/main.cpp       SDL2: panel, mouse/keyboard, audio, CoreMIDI, demo video (-DPVA_ACID builds the acid sim)
+tools/render.cpp   ProVS Groove tests, demo.wav, benchmark
+tools/acid_test.cpp ProVS Acid tests (generator rules, panel, audio), benchmark
 ```
 
 HAL boundary: `process()` from the audio DMA; `stepDown/keyDown/buttonDown/pot/joystick/midi` from the panel scan; `drawDisplay()` → OLED, `stepLeds()/led()` → LEDs; `takeSaveRequest()` → flash.
@@ -164,6 +173,84 @@ Open questions:
 4. What does the codec's ADC do (unused, or an audio input)?
 
 **Warning:** removing read-out protection on an STM32 erases the factory firmware. Flashing anything unofficial can brick your unit and void the warranty. Do it at your own risk, on a unit you can afford to lose.
+
+## ProVS Acid: a dedicated acid firmware
+
+![ProVS Acid in the simulator (silent preview)](docs/acid.gif)
+
+**[▶ ProVS Acid demo with sound (63 s, MP4, downloads)](https://github.com/latepilot/ProVS-Groove/raw/main/docs/acid.mp4)**
+
+A second firmware for the same panel, built around acid lines and a pattern generator. Same engine style, same HAL contract, its own simulator build in an acid colour scheme (`bin/provs-acid-sim`).
+
+**Sound**
+- **Two acid lines.** A is the bass, B a counter line an octave up. Each has the acid voice from ProVS Groove plus extras: saw-to-square morph, sub oscillator, drive with four shapes (soft, hard, fold, fuzz), level, and a tempo-synced LFO on the cutoff (1/16 to 8 bars).
+- **Drum lane:** kick, clap, closed and open hat (the open hat chokes the closed one).
+- Tempo-synced ping-pong delay with a send per line.
+- Sound settings are global (the knobs are live); notes live in 16 patterns. Patterns 1-8 ship with one line per style.
+
+**Step data per line:** note, octave (down / up / up 2), accent, slide, tie length (1-4 steps), probability. Lines and drums have their own length (polymeter).
+
+### The pattern generator
+
+Lines should sound written, not random. The generator builds a short motif first and develops it:
+
+1. **Rhythm cell** (4, 8 or 16 steps, depending on the style) from a metric grid that the style bends towards the downbeat or the off-beats, with a minimum note count so each style stays recognisable.
+2. **Repetition with variation** across the pattern, plus a **turnaround** that re-rolls the last steps.
+3. **Pitches from the scale**, weighted the way acid lines use them: root (strongly), fifth, minor third, seventh; the flat second in phrygian. Melodies move stepwise or leap depending on the style, drift back to the root and always touch it.
+4. **Call and response:** part of the second half moves to another degree.
+5. **Octave jumps** prefer off-beat 16ths, **slides** go where the pitch changes (more so across an octave), **accents** lean on syncopation and notes after rests (at most about half of the notes).
+6. **Ties** after notes followed by rests (more in HYPNO and DEEP); with high wildness some notes get a probability below 100 % so the loop breathes.
+7. **Line B answers line A:** it avoids the steps where A plays and favours the gaps.
+8. **Drums by style:** four on the floor for the house-type styles, broken kicks for STAB and SYNCO, euclidean kicks for WILD; open hats on the off-beats, density sets the closed hats.
+
+| Style | Character |
+|---|---|
+| CLASSIC | the all-rounder: 8-step motif, some slides and octave jumps |
+| ROLLING | driving 16ths around the root, octave pops |
+| HYPNO | sparse, long slides and ties, slowly turning |
+| STAB | few notes on the off-beats, heavy accents |
+| SYNCO | syncopated, 16-step phrase, funky accents |
+| DEEP | low, tied, few accents, octave drops |
+| RAVE | dense, wide octave jumps, lots of accents |
+| WILD | jumpy, no repetition, euclidean drums |
+
+Scales: minor, phrygian, dorian, harmonic minor, minor pentatonic, blues, major, chromatic. Any key.
+
+| Operation | What it does |
+|---|---|
+| GEN | a new line (or drum pattern) in the current style, scale and key |
+| MUTATE | changes a few steps: nudges notes along the scale, flips octaves, accents, slides, adds or drops a note |
+| RHYTHM | new rhythm, the notes keep their order |
+| NOTES | new notes on the same rhythm |
+| ACC/SLD | new accents and slides only |
+| UNDO | one level; press again to redo |
+| ROTATE | shifts the line by one step |
+| EVOLVE | while playing, mutates the pattern every 2 / 4 / 8 bars (UNDO steps back one evolution) |
+
+Generation is deterministic for a given seed (tested), so it can be replayed.
+
+### ProVS Acid panel
+
+| Control | Action |
+|---|---|
+| ENV | lane: line A → line B → drums (FIL / AMP / MIX LEDs) |
+| OSC | step-button layer: GATE / ACCENT / SLIDE / OCTAVE (A-D LEDs). On the drum lane: kick / clap / closed / open hat |
+| LFO | keyboard mode: PLAY or TRANSPOSE (the first C = no transpose, latching) |
+| step tap | toggles the current layer on that step |
+| hold step + key / PROG± / FUNC+PROG± | note / octave / tie length |
+| hold step + ENV / LFO / OSC | accent / slide / probability |
+| RECORD (stopped) | **step entry**: keys write notes and advance, FUNC+key = accented, legato = slide, PROG+ = rest, PROG− = back, a step button moves the cursor |
+| RECORD (playing) | live recording, quantized; legato writes slides |
+| FUNC + RECORD | clear the lane |
+| PROG − / + | pattern (queued to the bar while playing); FUNC = keyboard octave |
+| FUNC + joystick | generator density (X) and wildness (Y), latched |
+| joystick | live cutoff (X) and env mod (Y) on the current line |
+
+**FUNC + step:** 1 GEN, 2 MUTATE, 3 RHYTHM, 4 NOTES, 5 ACC/SLD, 6 UNDO, 7 STYLE (then step 1-8), 8 SCALE (then step 1-8; keys set the key), 9 EVOLVE, 10 ROTATE, 11 LEN, 12 COPY, 13 PASTE, 14 MUTE (steps 1-3), 15 PATTERN, 16 SAVE. FUNC + MEMORY WRITE = the same SETUP as ProVS Groove (MIDI clock / SYNC).
+
+**Knobs on a line:** R1-R4 = cutoff / resonance / env mod / decay (FUNC + R1-R3 = drive / sub / level), CUTOFF knob = accent, RESO knob = slide time, WAVE = saw-square (FUNC = distortion type), FREQ = tune ±12, LFO RATE / AMT = synced LFO on the cutoff, CHORUS RATE = delay time (FUNC = feedback), CHORUS AMT = delay send, TEMPO (FUNC = swing). On the drum lane: R1-R4 = kick tune / kick decay / hat decay / level, WAVE = drive, CHORUS AMT = send.
+
+**On hardware** both lines use their digital filter; the analog filter could take over line A once the board's audio path is known. Project size: 4.7 KB. CPU: about 225× real time on a Mac (≈92 ns per stereo sample), in the same range as ProVS Groove.
 
 ## TODO
 

@@ -25,7 +25,6 @@ const char* buttonName(int b) { return (b >= 0 && b < B_COUNT) ? kButtonNames[b]
 const char* potName(int p) { return (p >= 0 && p < K_COUNT) ? kPotNames[p] : "?"; }
 const char* funcName(int s) { return (s >= 0 && s < 16) ? kFuncNames[s] : "?"; }
 const char* trackName(int t) { return (t >= 0 && t < kNumTracks) ? kTrackNames[t] : "?"; }
-bool keyIsBlack(int k) { int s = (k + 5) % 12; return s == 1 || s == 3 || s == 6 || s == 8 || s == 10; }  // strip starts at F
 
 const char* paramName(int t, int slot) {
   if (t == kSynthTrack) {

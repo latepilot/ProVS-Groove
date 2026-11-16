@@ -133,18 +133,35 @@ tools/render.cpp   tests, demo.wav, benchmark
 
 HAL boundary: `process()` from the audio DMA; `stepDown/keyDown/buttonDown/pot/joystick/midi` from the panel scan; `drawDisplay()` → OLED, `stepLeds()/led()` → LEDs; `takeSaveRequest()` → flash.
 
-**CPU budget:** on a Mac the engine renders about 210× faster than real time (≈98 ns per stereo sample, all voices including acid). For a Cortex-M7 at 480 MHz that is roughly 5–15 % CPU at 48 kHz, as a rough estimate. Only the real chip will tell.
-**Memory:** wavetables 128 KB (float, can shrink to int16), delay buffer 192 KB (int16), project 76 KB. Fits in the 1 MB SRAM of an STM32H750.
+**CPU budget:** on a Mac the engine renders about 210× faster than real time (≈98 ns per stereo sample, all voices including acid). For the Cortex-M7 at 480 MHz (STM32H750, confirmed from a board photo) that is roughly 5–15 % CPU at 48 kHz, as a rough estimate. Only the real chip will tell.
+**Memory:** wavetables 128 KB (float, can shrink to int16), delay buffer 192 KB (int16), project 76 KB. Fits in the 512 KB AXI SRAM of the STM32H750 (see the RAM layout below).
 
 ## Getting it onto the hardware
 
 The preferred path is a supported one: Behringer / Music Tribe publishing a firmware packer, memory map and schematic for the PRO-VS MINI, as they did for the PRO-800 ([PRO800-Firmware-Packer](https://github.com/MusicTribeOpenSource/PRO800-Firmware-Packer)). The request is in [docs/behringer-request.md](docs/behringer-request.md).
 
-Open questions until then:
-1. Confirm the MCU (one forum post says STM32H750VB with read-out protection) and find the SWD pins.
-2. Is there external QSPI flash (the H750 has only 128 KB internal)?
-3. Pinout: the touch keyboard controller, the 16 step buttons and LEDs, the joystick, 13 pots, 9 buttons, 9 selector LEDs, the OLED (controller, confirm 128×32), the audio DAC/I2S, the cutoff and resonance CV of the analog filter, and the SYNC jack direction.
-4. **Does all audio go through the filter?** In the simulator the drums bypass the filter and the filter is emulated with a ladder model. On hardware `Ladder` is replaced by CV to the analog filter. The acid bass keeps its own digital filter either way, because the single analog filter belongs to the vector synth.
+### What is known about the board
+
+From a community photo of the main board (markings read off the photo, not measured):
+
+| Part | Marking | What it means for the port |
+|---|---|---|
+| MCU | **STM32H750VBT6** (LQFP100) | Cortex-M7 at 480 MHz with FPU, 1 MB RAM, only 128 KB internal flash. Confirms the CPU budget above. |
+| Flash | **W25Q16JV** (25Q16JVNIQ, SOIC-8) | 2 MB QSPI flash. The application most likely runs from it (execute in place at 0x90000000), with the bootloader in internal flash. |
+| Audio | **PCM3008T** (TI / Burr-Brown) | 16-bit stereo codec (DAC + ADC), up to 48 kHz. The engine output gets converted to int16 for it. |
+| Test points | TP4, TP5, TP7, TP10 next to the MCU | Candidates for SWD; not traced yet. |
+
+Consequences for the firmware:
+- **Run from QSPI, hot code in RAM.** The 2 MB flash is memory-mapped through the QUADSPI peripheral and cached. The audio callback and the DSP (`process`, the voices, the filters) go into ITCM (64 KB) so they never wait on flash.
+- **Saving needs care.** While the CPU executes from the QSPI chip it cannot erase or write that same chip. The save routine has to run from RAM with QSPI in indirect mode (audio can keep running from ITCM), or save on stop. The project is 76 KB = 19 sectors of 4 KB.
+- **RAM layout:** wavetables 128 KB + delay 192 KB + project 76 KB fit in the 512 KB AXI SRAM; DMA audio buffers in SRAM1/2; DTCM for the stack and hot state.
+- **16-bit output:** fine for this engine (the delay is already int16); add light dither on the final conversion.
+
+Open questions:
+1. Is read-out protection set, and which test points are SWD (SWDIO / SWCLK / NRST)?
+2. Pinout: the touch keyboard controller, the 16 step buttons and LEDs, the joystick, 13 pots, 9 buttons, 9 selector LEDs, the OLED (controller, confirm 128×32), the PCM3008 wiring (which channel feeds what), the cutoff and resonance CV of the analog filter, and the SYNC jack direction.
+3. **Does all audio go through the filter?** With one stereo DAC, the analog filter probably sits on one path after the codec. If drums and the acid line can't bypass it, they would have to be mixed before the filter (or into the other DAC channel). In the simulator the drums bypass the filter and the filter is emulated with a ladder model. On hardware `Ladder` is replaced by CV to the analog filter. The acid bass keeps its own digital filter either way.
+4. What does the codec's ADC do (unused, or an audio input)?
 
 **Warning:** removing read-out protection on an STM32 erases the factory firmware. Flashing anything unofficial can brick your unit and void the warranty. Do it at your own risk, on a unit you can afford to lose.
 

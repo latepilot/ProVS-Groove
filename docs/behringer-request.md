@@ -25,10 +25,11 @@ safely through the protected bootloader, so nobody can brick a unit for good.
 What we would need for the PRO-VS MINI:
 - Packer / update-file format the bootloader accepts (USB or SysEx), and how to get back to
   the factory firmware.
-- Flash and RAM memory map (application start address, any external QSPI flash, reserved areas).
+- Flash and RAM memory map: application start address in the W25Q16 QSPI flash, the bootloader area
+  in internal flash, reserved areas (e.g. where presets live).
 - Schematic or pinout: the 16 step buttons and their LEDs, the ENV/LFO/OSC selector LEDs, the
   capacitive keyboard controller, the 13 pots and the joystick, the OLED (controller and
-  resolution), the audio DAC/codec interface, the cutoff/resonance control of the analog filter,
+  resolution), the PCM3008 codec wiring (which DAC channel goes through the analog filter), the cutoff/resonance control of the analog filter,
   MIDI IN, USB MIDI, and the SYNC jack (input, output or both?).
 
 Factory firmware sources are NOT needed.
